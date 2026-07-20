@@ -1,0 +1,40 @@
+{
+  "name": "codex-code-rot-cleaner",
+  "version": "0.1.0",
+  "description": "A consent-first Codex skill that finds code a project may no longer need and proves eligible removals in disposable copies.",
+  "license": "MIT",
+  "author": "Francesco Mistero",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kappaemme-git/codex-code-rot-cleaner.git"
+  },
+  "homepage": "https://github.com/Kappaemme-git/codex-code-rot-cleaner#readme",
+  "bugs": {
+    "url": "https://github.com/Kappaemme-git/codex-code-rot-cleaner/issues"
+  },
+  "bin": {
+    "codex-code-rot-cleaner": "scripts/install.js"
+  },
+  "files": [
+    "code-rot-cleaner",
+    "scripts/install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -v",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "codex",
+    "skill",
+    "dead-code",
+    "unused-code",
+    "code-cleanup",
+    "refactoring",
+    "developer-tools"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

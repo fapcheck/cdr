@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.tgz
+outputs/
+.DS_Store
