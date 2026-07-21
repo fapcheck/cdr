@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -217,8 +219,13 @@ def main() -> int:
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
+    candidate_ids = [item.get("candidate_id") for item in data.get("candidates", [])]
+    if any(not isinstance(candidate_id, str) or not re.fullmatch(r"CRT-\d+", candidate_id) for candidate_id in candidate_ids):
+        raise SystemExit("Analysis contains an invalid candidate_id.")
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise SystemExit("Analysis contains duplicate candidate_id values.")
     selected_ids = set(args.candidate_id or [])
-    known_ids = {item.get("candidate_id") for item in data.get("candidates", [])}
+    known_ids = set(candidate_ids)
     unknown_ids = selected_ids - known_ids
     if unknown_ids:
         raise SystemExit(f"Unknown candidate IDs: {', '.join(sorted(unknown_ids))}")
@@ -241,6 +248,7 @@ def main() -> int:
         "schema_version": "2.0",
         "project_root": str(project),
         "analysis_file": str(analysis_path),
+        "analysis_sha256": hashlib.sha256(analysis_path.read_bytes()).hexdigest(),
         "generated_at": utc_now(),
         "command_policy": command_policy,
         "commands_requested": [command_request_record(command) for command in commands],
@@ -251,6 +259,8 @@ def main() -> int:
             "Commands ran in disposable copies, not the real project.",
             "A green command set proves only the behavior exercised by those commands.",
             "Network isolation is not enforced; the sanitized environment removes common credential variables but cannot prevent unauthenticated network access.",
+            "Disposable copies do not isolate the host filesystem or process namespace; approved commands retain the current user's operating-system permissions.",
+            "A timeout stops the direct command but is not guaranteed to terminate every descendant process on every platform.",
         ],
     }
     if args.shell_command:
@@ -264,9 +274,9 @@ def main() -> int:
         baseline_passed = bool(baseline_commands) and all(command["passed"] for command in baseline_commands)
         result["baseline"] = {"passed": baseline_passed, "commands": baseline_commands}
         if baseline_passed:
-            for candidate in candidates:
+            for candidate_index, candidate in enumerate(candidates, start=1):
                 started = time.monotonic()
-                candidate_dir = temporary_root / candidate["candidate_id"]
+                candidate_dir = temporary_root / f"candidate-{candidate_index:04d}"
                 copy_project(project, candidate_dir, args.include_dependencies)
                 relative_path = candidate["affected"]["path"]
                 try:

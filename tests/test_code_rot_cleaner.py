@@ -18,6 +18,7 @@ SKILL = ROOT / "code-rot-cleaner"
 SCRIPTS = SKILL / "scripts"
 TS_FIXTURE = ROOT / "tests" / "fixtures" / "typescript-project"
 PY_FIXTURE = ROOT / "tests" / "fixtures" / "python-audit-project"
+TOOL_OUTPUT = ROOT / "tests" / "fixtures" / "tool-output"
 
 sys.path.insert(0, str(SCRIPTS))
 
@@ -127,30 +128,205 @@ class CodeRotCleanerTests(unittest.TestCase):
             self.assertIn("unresolved_questions", orphan)
             self.assertEqual({item["family"] for item in orphan["evidence_sources"]}, {"builtin"})
 
-    def test_knip_collector_is_mockable_and_adds_independent_evidence(self) -> None:
-        typescript = load_module("typescript_collector", SCRIPTS / "collectors" / "typescript.py")
-        payload = {
-            "issues": [{
-                "file": "src/orphan.ts",
-                "files": [{"name": "src/orphan.ts"}],
-                "exports": [],
-                "dependencies": [],
-            }]
-        }
-        fake_result = {
-            "exit_code": 1,
-            "stdout": json.dumps(payload),
-            "stderr": "",
+    @staticmethod
+    def tool_result(stdout: str, *, exit_code: int = 0, stderr: str = "") -> dict:
+        return {
+            "completed": exit_code in {0, 1},
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
             "timed_out": False,
-            "redacted": False,
+            "redacted": "[REDACTED]" in stderr,
+            "command": "captured fixture",
+            "execution_mode": "argv-no-shell",
+            "environment_policy": {"name": "sanitized-allowlist-v1"},
         }
 
-        with mock.patch.object(typescript, "run_approved_tool", return_value=fake_result):
+    def test_realistic_knip_v6_contract_is_normalized_and_allows_additional_fields(self) -> None:
+        typescript = load_module("typescript_collector", SCRIPTS / "collectors" / "typescript.py")
+        payload = (TOOL_OUTPUT / "knip-v6.json").read_text(encoding="utf-8")
+
+        with mock.patch.object(typescript, "run_approved_tool", side_effect=[
+            self.tool_result("6.0.0\n"),
+            self.tool_result(payload, exit_code=1),
+        ]):
             signals, tool_run = typescript.collect_knip(TS_FIXTURE, Path("knip"), 30)
 
         self.assertEqual(tool_run["tool"], "knip")
-        self.assertEqual(signals[0]["affected"]["path"], "src/orphan.ts")
+        self.assertEqual(tool_run["status"], "available and succeeded")
+        self.assertEqual(tool_run["version"], "6.0.0")
+        self.assertEqual(signals[0]["affected"]["path"], "src/legacy.ts")
         self.assertEqual(signals[0]["evidence"]["family"], "knip")
+        self.assertIn("lodash", {item["affected"].get("dependency") for item in signals})
+
+    def test_machine_readable_contract_fixtures_are_normalized(self) -> None:
+        python_collector = load_module("python_contract_collector", SCRIPTS / "collectors" / "python.py")
+        cases = (
+            ("ruff", python_collector.collect_ruff, "ruff-0.15.json", "0.15.10", 2, 1),
+            ("vulture", python_collector.collect_vulture, "vulture-api-v1.json", "2.14", 8, 0),
+        )
+        for name, collector, fixture_name, version, expected_count, finding_exit in cases:
+            with self.subTest(tool=name), mock.patch.object(
+                python_collector,
+                "run_approved_tool",
+                side_effect=[self.tool_result(f"{name} {version}\n"), self.tool_result((TOOL_OUTPUT / fixture_name).read_text(encoding="utf-8"), exit_code=finding_exit)],
+            ):
+                signals, tool_run = collector(PY_FIXTURE, Path(name), 30)
+            self.assertEqual(len(signals), expected_count)
+            self.assertEqual(tool_run["status"], "available and succeeded")
+            self.assertEqual(tool_run["version"], version)
+
+        deptry_payload = (TOOL_OUTPUT / "deptry.json").read_text(encoding="utf-8")
+
+        def deptry_runner(argv, *_args, **_kwargs):
+            if "--version" in argv:
+                return self.tool_result("deptry 0.23.1\n")
+            output = Path(argv[argv.index("--json-output") + 1])
+            output.write_text(deptry_payload, encoding="utf-8")
+            return self.tool_result("", exit_code=1)
+
+        with mock.patch.object(python_collector, "run_approved_tool", side_effect=deptry_runner):
+            signals, tool_run = python_collector.collect_deptry(PY_FIXTURE, Path("deptry"), 30)
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(tool_run["status"], "available and succeeded")
+        self.assertEqual(tool_run["version"], "0.23.1")
+
+    def test_malformed_and_unknown_json_fail_closed(self) -> None:
+        typescript = load_module("typescript_schema_collector", SCRIPTS / "collectors" / "typescript.py")
+        python_collector = load_module("python_schema_collector", SCRIPTS / "collectors" / "python.py")
+        cases = (
+            (typescript.collect_knip, "{not json"),
+            (typescript.collect_knip, json.dumps({"unexpected": []})),
+            (python_collector.collect_ruff, "{not json"),
+            (python_collector.collect_ruff, json.dumps({"issues": []})),
+            (python_collector.collect_deptry, "{not json"),
+            (python_collector.collect_deptry, json.dumps({"issues": []})),
+            (python_collector.collect_vulture, "{not json"),
+            (python_collector.collect_vulture, json.dumps({"items": []})),
+        )
+        for collector, stdout in cases:
+            module = typescript if collector.__name__ == "collect_knip" else python_collector
+            with self.subTest(collector=collector.__name__, stdout=stdout), mock.patch.object(
+                module,
+                "run_approved_tool",
+                side_effect=[self.tool_result("tool 1.0\n"), self.tool_result(stdout)],
+            ):
+                signals, tool_run = collector(PY_FIXTURE, Path("tool"), 30)
+            self.assertEqual(signals, [])
+            self.assertEqual(tool_run["status"], "unsupported output schema")
+
+    def test_process_failure_is_distinct_from_successful_findings(self) -> None:
+        typescript = load_module("typescript_exit_collector", SCRIPTS / "collectors" / "typescript.py")
+        payload = (TOOL_OUTPUT / "knip-v6.json").read_text(encoding="utf-8")
+        with mock.patch.object(typescript, "run_approved_tool", side_effect=[
+            self.tool_result("6.0.0\n"),
+            self.tool_result(payload, exit_code=2, stderr="internal error"),
+        ]):
+            signals, tool_run = typescript.collect_knip(TS_FIXTURE, Path("knip"), 30)
+        self.assertEqual(signals, [])
+        self.assertEqual(tool_run["status"], "failed")
+        self.assertEqual(tool_run["stderr"], "internal error")
+
+    def test_known_pre_contract_tool_versions_are_rejected_without_scanning(self) -> None:
+        typescript = load_module("typescript_old_version_collector", SCRIPTS / "collectors" / "typescript.py")
+        python_collector = load_module("python_old_version_collector", SCRIPTS / "collectors" / "python.py")
+        cases = (
+            (typescript, typescript.collect_knip, "knip 5.99.0\n"),
+            (python_collector, python_collector.collect_deptry, "deptry 0.9.0\n"),
+            (python_collector, python_collector.collect_vulture, "vulture 1.4\n"),
+        )
+        for module, collector, version_output in cases:
+            with self.subTest(collector=collector.__name__), mock.patch.object(
+                module, "run_approved_tool", return_value=self.tool_result(version_output),
+            ) as runner:
+                signals, tool_run = collector(PY_FIXTURE, Path("tool"), 30)
+            self.assertEqual(signals, [])
+            self.assertEqual(tool_run["status"], "unsupported output schema")
+            self.assertEqual(runner.call_count, 1)
+
+    def test_external_tool_inventory_reports_unavailable_and_unapproved_states(self) -> None:
+        audit_module = load_module("audit_inventory", SCRIPTS / "audit.py")
+        candidates: list[dict] = []
+        available = {"knip": None, "vulture": "vulture", "ruff": None, "deptry": None}
+        runs = audit_module.collect_external_tools(Path.cwd(), candidates, {"knip"}, 30, available)
+        by_tool = {run["tool"]: run for run in runs}
+        self.assertEqual(by_tool["knip"]["status"], "unavailable")
+        self.assertEqual(by_tool["vulture"]["status"], "skipped because approval was not granted")
+
+    def test_one_failed_collector_does_not_discard_another_collectors_evidence(self) -> None:
+        audit_module = load_module("audit_isolation", SCRIPTS / "audit.py")
+        signal = {
+            "category": "orphan-file",
+            "affected": {"kind": "file", "path": "stale.py"},
+            "evidence": {"family": "ruff", "source": "ruff.F401", "signal": "no-usage-evidence", "detail": "captured"},
+        }
+        failed = mock.Mock(side_effect=RuntimeError("collector exploded"))
+        succeeded = mock.Mock(return_value=([signal], {"tool": "ruff", "status": "available and succeeded"}))
+        with mock.patch.dict(audit_module.EXTERNAL_COLLECTORS, {"knip": failed, "ruff": succeeded}, clear=True):
+            runs = audit_module.collect_external_tools(
+                Path.cwd(), [], {"knip", "ruff"}, 30, {"knip": "knip", "ruff": "ruff"},
+            )
+        self.assertEqual([run["status"] for run in runs], ["failed", "available and succeeded"])
+
+    def test_missing_knip_configuration_keeps_file_finding_unresolved(self) -> None:
+        typescript = load_module("typescript_config_collector", SCRIPTS / "collectors" / "typescript.py")
+        payload = (TOOL_OUTPUT / "knip-v6.json").read_text(encoding="utf-8")
+        with mock.patch.object(typescript, "run_approved_tool", side_effect=[
+            self.tool_result("6.0.0\n"), self.tool_result(payload, exit_code=1),
+        ]):
+            signals, _ = typescript.collect_knip(TS_FIXTURE, Path("knip"), 30)
+        file_signal = next(item for item in signals if item["category"] == "orphan-file")
+        self.assertTrue(file_signal["unresolved_questions"])
+
+    def test_knip_optional_peer_is_not_removal_evidence_and_dependency_paths_stay_distinct(self) -> None:
+        typescript = load_module("typescript_semantics_collector", SCRIPTS / "collectors" / "typescript.py")
+        audit_module = load_module("audit_dependency_identity", SCRIPTS / "audit.py")
+        payload = {
+            "issues": [{
+                "file": "packages/a/package.json",
+                "files": [],
+                "dependencies": [{"name": "lodash"}],
+                "devDependencies": [],
+                "optionalPeerDependencies": [{"name": "react"}],
+            }]
+        }
+        signals = typescript.parse_knip_output(json.dumps(payload), TS_FIXTURE)
+        self.assertNotIn("react", {item["affected"].get("dependency") for item in signals})
+        candidates = [
+            {"affected": {"kind": "dependency", "path": "packages/a/package.json", "dependency": "lodash"}, "evidence_sources": [], "unresolved_questions": []},
+            {"affected": {"kind": "dependency", "path": "packages/b/package.json", "dependency": "lodash"}, "evidence_sources": [], "unresolved_questions": []},
+        ]
+        audit_module.merge_external_signals(candidates, signals)
+        self.assertEqual(len(candidates[0]["evidence_sources"]), 1)
+        self.assertEqual(candidates[1]["evidence_sources"], [])
+
+    def test_captured_vulture_e2e_keeps_dynamic_cli_and_public_surfaces_review_only(self) -> None:
+        audit_module = load_module("audit_vulture_e2e", SCRIPTS / "audit.py")
+        builtin = load_module("builtin_vulture_e2e", SCRIPTS / "collectors" / "builtin.py")
+        python_collector = load_module("python_vulture_e2e", SCRIPTS / "collectors" / "python.py")
+        collected = builtin.collect(PY_FIXTURE)
+        signals, version = python_collector.parse_vulture_output(
+            (TOOL_OUTPUT / "vulture-api-v1.json").read_text(encoding="utf-8"), PY_FIXTURE,
+        )
+        audit_module.merge_external_signals(collected["candidates"], signals)
+        audit_module.finalize_candidates(collected["candidates"])
+        by_symbol = {
+            (item["affected"].get("path"), item["affected"].get("symbol")): item
+            for item in collected["candidates"]
+            if item["affected"].get("symbol")
+        }
+        self.assertEqual(version, "2.14")
+        self.assertIn(("app/stale.py", "stale_function"), by_symbol)
+        for key in (
+            ("app/cli.py", "main"),
+            ("app/dynamic_loader.py", "dynamic_hook"),
+            ("public_pkg/exported.py", "public_hook"),
+        ):
+            candidate = by_symbol[key]
+            self.assertEqual(candidate["recommendation"], "REVIEW")
+            self.assertTrue(candidate["unresolved_questions"])
+            self.assertFalse(candidate["proof_eligible"])
+        self.assertNotIn(("app/used_across_modules.py", "used_across_modules"), by_symbol)
 
     def test_npm_package_dry_run_excludes_python_bytecode(self) -> None:
         npm = shutil.which("npm")
@@ -242,6 +418,23 @@ class CodeRotCleanerTests(unittest.TestCase):
         self.assertTrue(redacted)
         self.assertNotIn(fake_token, masked)
         self.assertNotIn("abcdefghijklmnop", masked)
+        generic_secret = "correct-horse-battery-staple"
+        masked, redacted = security.mask_secrets(
+            f"PASSWORD={generic_secret} --api-key {generic_secret} npm_abcdefghijklmnopqrstuvwxyz",
+            {},
+        )
+        self.assertTrue(redacted)
+        self.assertNotIn(generic_secret, masked)
+        with tempfile.TemporaryDirectory() as temp:
+            result = security.run_approved_tool(
+                [sys.executable, "-c", f"import sys; sys.stderr.write('token={generic_secret}')"],
+                Path(temp),
+                10,
+                accepted_exit_codes=(0,),
+            )
+        self.assertTrue(result["completed"])
+        self.assertEqual(result["stderr"], "token=[REDACTED]")
+        self.assertTrue(result["redacted"])
 
     def test_symlink_escape_guard_rejects_targets_outside_project(self) -> None:
         proof = load_module("proof_module", SCRIPTS / "proof.py")
@@ -270,7 +463,13 @@ class CodeRotCleanerTests(unittest.TestCase):
             "scope": {"source_files": 1, "source_loc": 1, "source_bytes": candidate.stat().st_size},
             "summary": {"candidates": 1},
             "ecosystems": {},
-            "tool_runs": [],
+            "tool_runs": [{
+                "tool": "knip",
+                "executable": "knip",
+                "version": "6.0.0",
+                "status": "available and succeeded",
+                "approval_granted": True,
+            }],
             "candidates": [{
                 "candidate_id": "CRT-001",
                 "category": "orphan-file",
@@ -327,6 +526,63 @@ class CodeRotCleanerTests(unittest.TestCase):
             with csv_path.open(encoding="utf-8") as handle:
                 row = next(csv.DictReader(handle))
             self.assertEqual(row["recommendation"], "SAFE TO REMOVE")
+
+    def test_tampered_or_cross_project_proof_never_promotes_safe(self) -> None:
+        mutations = (
+            lambda analysis, proof: analysis["limitations"].append("changed after proof"),
+            lambda analysis, proof: proof.__setitem__("project_root", str(Path(analysis["project_root"]).parent / "other")),
+            lambda analysis, proof: proof["results"][0].__setitem__("path", "different.py"),
+            lambda analysis, proof: proof["results"][0].__setitem__("commands", []),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                project = base / "project"
+                project.mkdir()
+                (project / "orphan.py").write_text("VALUE = 1\n", encoding="utf-8")
+                analysis_path = self.make_analysis(project, "orphan.py")
+                proof_path = base / "proof.json"
+                self.prove(project, analysis_path, proof_path, "from pathlib import Path; assert Path('.').is_dir()")
+                analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+                proof = json.loads(proof_path.read_text(encoding="utf-8"))
+                mutation(analysis, proof)
+                analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
+                proof_path.write_text(json.dumps(proof), encoding="utf-8")
+                report_path = base / "report.md"
+                self.run_script("report.py", analysis_path, report_path, base / "plan.csv", "--proof", proof_path)
+                report = report_path.read_text(encoding="utf-8")
+                self.assertNotIn("### CRT-001 - SAFE TO REMOVE", report)
+
+    def test_failed_external_collector_cannot_supply_mature_safe_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            project = base / "project"
+            project.mkdir()
+            (project / "orphan.py").write_text("VALUE = 1\n", encoding="utf-8")
+            analysis_path = self.make_analysis(project, "orphan.py")
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+            analysis["tool_runs"][0]["status"] = "failed"
+            analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
+            proof_path = base / "proof.json"
+            self.prove(project, analysis_path, proof_path, "from pathlib import Path; assert Path('.').is_dir()")
+            report_path = base / "report.md"
+            self.run_script("report.py", analysis_path, report_path, base / "plan.csv", "--proof", proof_path)
+            self.assertNotIn("### CRT-001 - SAFE TO REMOVE", report_path.read_text(encoding="utf-8"))
+
+    def test_wrong_top_level_proof_schema_is_inconclusive_not_a_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            project = base / "project"
+            project.mkdir()
+            (project / "orphan.py").write_text("VALUE = 1\n", encoding="utf-8")
+            analysis_path = self.make_analysis(project, "orphan.py")
+            proof_path = base / "proof.json"
+            proof_path.write_text("[]", encoding="utf-8")
+            report_path = base / "report.md"
+            self.run_script("report.py", analysis_path, report_path, base / "plan.csv", "--proof", proof_path)
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("**INCONCLUSIVE**", report)
+            self.assertNotIn("### CRT-001 - SAFE TO REMOVE", report)
 
     def test_disposable_proof_failure_keeps_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

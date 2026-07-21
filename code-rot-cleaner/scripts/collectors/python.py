@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
 
+from collectors.contracts import (
+    UnsupportedOutputSchema,
+    load_json,
+    probe_version,
+    require_list,
+    require_mapping,
+    require_positive_line,
+    require_string,
+    tool_run,
+)
 from security import run_approved_tool
 
 
@@ -179,88 +191,199 @@ def convention_role(path: Path, root: Path, text: str, context: dict[str, Any]) 
     return None
 
 
-def collect_vulture(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    argv = [str(executable), ".", "--min-confidence", "80"]
-    result = run_approved_tool(argv, root, timeout)
+def _normal_path(filename: str, root: Path) -> str:
+    path = Path(filename)
+    try:
+        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+        return resolved.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return filename.replace("\\", "/")
+
+
+def _vulture_runtime(executable: Path) -> Path:
+    names = ("python.exe", "python3.exe") if os.name == "nt" else ("python", "python3")
+    for name in names:
+        candidate = executable.parent / name
+        if candidate.is_file():
+            return candidate.resolve()
+    if executable.is_file() and executable.suffix.lower() not in {".exe", ".cmd", ".bat"}:
+        try:
+            first_line = executable.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+        except (OSError, IndexError):
+            first_line = ""
+        if first_line.startswith("#!"):
+            interpreter = Path(first_line[2:].strip().split()[0])
+            if interpreter.is_file():
+                return interpreter.resolve()
+    return Path(sys.executable).resolve()
+
+
+def _python_sources(root: Path) -> list[str]:
+    excluded = {
+        ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "vendor",
+        "dist", "build", "coverage", "__pycache__", ".tox", ".nox",
+    }
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if path.is_file() and not path.is_symlink() and not excluded.intersection(path.relative_to(root).parts)
+    )
+
+
+def parse_vulture_output(text: str, root: Path) -> tuple[list[dict[str, Any]], str]:
+    payload = require_mapping(load_json(text, "Vulture API adapter"), "Vulture API output")
+    if payload.get("schema_version") != "vulture-api-v1":
+        raise UnsupportedOutputSchema("Vulture API output has an unsupported schema_version.")
+    version = require_string(payload.get("tool_version"), "Vulture API tool_version")
+    items = require_list(payload.get("items"), "Vulture API items")
     signals: list[dict[str, Any]] = []
-    pattern = re.compile(r"^(.*?):(\d+):\s+unused\s+.+?\s+'([^']+)'\s+\((\d+)% confidence\)$")
-    for line in (result.get("stdout") or "").splitlines():
-        match = pattern.match(line.strip())
-        if not match:
-            continue
+    for index, raw_item in enumerate(items):
+        item = require_mapping(raw_item, f"Vulture items[{index}]")
+        name = require_string(item.get("name"), f"Vulture items[{index}].name")
+        item_type = require_string(item.get("type"), f"Vulture items[{index}].type")
+        filename = require_string(item.get("filename"), f"Vulture items[{index}].filename")
+        line = require_positive_line(item.get("first_lineno"), f"Vulture items[{index}].first_lineno")
+        confidence = item.get("confidence")
+        if not isinstance(confidence, int) or isinstance(confidence, bool) or not 0 <= confidence <= 100:
+            raise UnsupportedOutputSchema(f"Vulture items[{index}].confidence must be an integer from 0 to 100.")
+        symbol = f"unreachable-code@{line}" if item_type == "unreachable_code" else name
         signals.append({
             "category": "symbol-no-usage-evidence",
-            "affected": {"kind": "symbol", "path": match.group(1).replace("\\", "/"), "symbol": match.group(3), "line": int(match.group(2))},
-            "evidence": {"family": "vulture", "source": "vulture.symbol", "signal": "no-usage-evidence", "detail": f"Vulture reported {match.group(4)}% confidence."},
+            "affected": {"kind": "symbol", "path": _normal_path(filename, root), "symbol": symbol, "line": line},
+            "evidence": {
+                "family": "vulture",
+                "source": f"vulture.{item_type}",
+                "signal": "no-usage-evidence",
+                "detail": f"Vulture API reported {item_type} at {confidence}% confidence.",
+            },
+            "unresolved_questions": [
+                "Could implicit calls, decorators, framework hooks, public APIs, reflection, or same-name cross-module use make this symbol reachable?",
+            ],
         })
-    return signals, _tool_run("vulture", result, argv, "Vulture uses static analysis and can miss dynamic Python access.")
+    return signals, version
+
+
+def collect_vulture(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    version, version_result, version_error = probe_version(run_approved_tool, executable, root, timeout, "Vulture")
+    if version_error:
+        return [], tool_run(
+            name="vulture", executable=executable, version=None, result=version_result,
+            argv=[str(executable), "--version"], limitation="Vulture is supporting, scope-insensitive static evidence and can miss dynamic or implicit Python use.",
+            status="failed", contract_error=version_error,
+        )
+    if int(version.split(".", 1)[0]) < 2:
+        return [], tool_run(
+            name="vulture", executable=executable, version=version, result=version_result,
+            argv=[str(executable), "--version"], limitation="Vulture is supporting, scope-insensitive static evidence and can miss dynamic or implicit Python use.",
+            status="unsupported output schema", contract_error="This API adapter supports Vulture 2.x and newer compatible API output.",
+        )
+    adapter = Path(__file__).resolve().parents[1] / "vulture_adapter.py"
+    with tempfile.TemporaryDirectory(prefix="code-rot-vulture-") as temp:
+        manifest = Path(temp) / "python-sources.json"
+        manifest.write_text(json.dumps(_python_sources(root)), encoding="utf-8")
+        argv = [str(_vulture_runtime(executable)), str(adapter), str(root), str(manifest), "--min-confidence", "60"]
+        result = run_approved_tool(argv, root, timeout, accepted_exit_codes=(0,))
+    if not result.get("completed", False) or (result.get("stderr") or "").strip():
+        return [], tool_run(
+            name="vulture", executable=executable, version=version, result=result, argv=argv,
+            limitation="Vulture is supporting, scope-insensitive static evidence and can miss dynamic or implicit Python use.", status="failed",
+        )
+    try:
+        signals, api_version = parse_vulture_output(result.get("stdout") or "", root)
+    except UnsupportedOutputSchema as error:
+        return [], tool_run(
+            name="vulture", executable=executable, version=version, result=result, argv=argv,
+            limitation="Vulture is supporting, scope-insensitive static evidence and can miss dynamic or implicit Python use.",
+            status="unsupported output schema", contract_error=str(error),
+        )
+    return signals, tool_run(
+        name="vulture", executable=executable, version=api_version, result=result, argv=argv,
+        limitation="Vulture is supporting, scope-insensitive static evidence and can miss dynamic or implicit Python use.", status="available and succeeded",
+    )
 
 
 def collect_ruff(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    version, version_result, version_error = probe_version(run_approved_tool, executable, root, timeout, "Ruff")
+    limitation = "Ruff findings are local lint evidence, not proof that an enclosing file or symbol is removable."
+    if version_error:
+        return [], tool_run(name="ruff", executable=executable, version=None, result=version_result, argv=[str(executable), "--version"], limitation=limitation, status="failed", contract_error=version_error)
     argv = [str(executable), "check", ".", "--select", "F401,F811,F841", "--output-format", "json", "--no-cache", "--no-fix"]
-    result = run_approved_tool(argv, root, timeout)
+    result = run_approved_tool(argv, root, timeout, accepted_exit_codes=(0, 1))
+    if not result.get("completed", False):
+        return [], tool_run(name="ruff", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="failed")
     try:
-        payload = json.loads(result.get("stdout") or "[]")
-    except json.JSONDecodeError:
-        payload = []
+        payload = require_list(load_json(result.get("stdout") or "", "Ruff"), "Ruff output")
+    except UnsupportedOutputSchema as error:
+        return [], tool_run(name="ruff", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="unsupported output schema", contract_error=str(error))
     signals = []
-    for issue in payload if isinstance(payload, list) else []:
-        location = issue.get("location") or {}
-        path = str(issue.get("filename") or "").replace("\\", "/")
-        try:
-            path = Path(path).resolve().relative_to(root).as_posix()
-        except (OSError, ValueError):
-            pass
+    try:
+        for index, raw_issue in enumerate(payload):
+            issue = require_mapping(raw_issue, f"Ruff output[{index}]")
+            code = require_string(issue.get("code"), f"Ruff output[{index}].code")
+            filename = require_string(issue.get("filename"), f"Ruff output[{index}].filename")
+            message = require_string(issue.get("message"), f"Ruff output[{index}].message")
+            location = require_mapping(issue.get("location"), f"Ruff output[{index}].location")
+            row = require_positive_line(location.get("row"), f"Ruff output[{index}].location.row")
+            column = require_positive_line(location.get("column"), f"Ruff output[{index}].location.column")
+            path = _normal_path(filename, root)
+            signals.append({
+                "category": "symbol-no-usage-evidence",
+                "affected": {"kind": "symbol", "path": path, "symbol": f"{code}@{row}:{column}", "line": row, "column": column},
+                "evidence": {
+                    "family": "ruff", "source": f"ruff.{code}", "signal": "no-usage-evidence",
+                    "detail": re.sub(r"\bunused\b", "with no usage evidence", message, flags=re.IGNORECASE),
+                },
+            })
+    except UnsupportedOutputSchema as error:
+        return [], tool_run(name="ruff", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="unsupported output schema", contract_error=str(error))
+    return signals, tool_run(name="ruff", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="available and succeeded")
+
+
+def parse_deptry_output(text: str) -> list[dict[str, Any]]:
+    payload = require_list(load_json(text, "deptry"), "deptry output")
+    signals: list[dict[str, Any]] = []
+    for index, raw_issue in enumerate(payload):
+        issue = require_mapping(raw_issue, f"deptry output[{index}]")
+        error = require_mapping(issue.get("error"), f"deptry output[{index}].error")
+        code = require_string(error.get("code"), f"deptry output[{index}].error.code")
+        message = require_string(error.get("message"), f"deptry output[{index}].error.message")
+        module = require_string(issue.get("module"), f"deptry output[{index}].module")
+        location = require_mapping(issue.get("location"), f"deptry output[{index}].location")
+        path = require_string(location.get("file"), f"deptry output[{index}].location.file").replace("\\", "/")
+        if code != "DEP002":
+            continue
         signals.append({
-            "category": "symbol-no-usage-evidence",
-            "affected": {"kind": "symbol", "path": path, "symbol": issue.get("code", "ruff-finding"), "line": location.get("row")},
-            "evidence": {
-                "family": "ruff",
-                "source": f"ruff.{issue.get('code', 'finding')}",
-                "signal": "no-usage-evidence",
-                "detail": re.sub(
-                    r"\bunused\b",
-                    "with no usage evidence",
-                    str(issue.get("message") or "Ruff reported a related static finding."),
-                    flags=re.IGNORECASE,
-                ),
-            },
+            "category": "dependency-no-usage-evidence",
+            "affected": {"kind": "dependency", "path": path, "dependency": module},
+            "evidence": {"family": "deptry", "source": "deptry.DEP002", "signal": "no-usage-evidence", "detail": message},
         })
-    return signals, _tool_run("ruff", result, argv, "Ruff findings are local lint evidence, not proof that an enclosing file is removable.")
+    return signals
 
 
 def collect_deptry(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    version, version_result, version_error = probe_version(run_approved_tool, executable, root, timeout, "deptry")
+    limitation = "deptry dependency reachability can be incomplete for plugins and non-literal dynamic imports."
+    if version_error:
+        return [], tool_run(name="deptry", executable=executable, version=None, result=version_result, argv=[str(executable), "--version"], limitation=limitation, status="failed", contract_error=version_error)
+    version_parts = tuple(int(part) for part in version.split("-")[0].split(".")[:2])
+    if version_parts < (0, 10):
+        return [], tool_run(
+            name="deptry", executable=executable, version=version, result=version_result,
+            argv=[str(executable), "--version"], limitation=limitation, status="unsupported output schema",
+            contract_error="This adapter supports deptry's 0.10+ error-code and location JSON contract.",
+        )
     with tempfile.TemporaryDirectory(prefix="code-rot-deptry-") as temp:
         json_path = Path(temp) / "deptry.json"
         argv = [str(executable), ".", "--json-output", str(json_path), "--no-ansi"]
-        result = run_approved_tool(argv, root, timeout)
+        result = run_approved_tool(argv, root, timeout, accepted_exit_codes=(0, 1))
+        if not result.get("completed", False):
+            return [], tool_run(name="deptry", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="failed")
         try:
-            payload = json.loads(json_path.read_text(encoding="utf-8")) if json_path.is_file() else []
-        except (OSError, json.JSONDecodeError):
-            payload = []
-    signals = []
-    for issue in payload if isinstance(payload, list) else []:
-        error = issue.get("error") or {}
-        if error.get("code") != "DEP002":
-            continue
-        location = issue.get("location") or {}
-        signals.append({
-            "category": "dependency-no-usage-evidence",
-            "affected": {"kind": "dependency", "path": str(location.get("file") or "pyproject.toml").replace("\\", "/"), "dependency": str(issue.get("module") or "<unknown>")},
-            "evidence": {"family": "deptry", "source": "deptry.DEP002", "signal": "no-usage-evidence", "detail": str(error.get("message") or "deptry reported an obsolete dependency signal.")},
-        })
-    return signals, _tool_run("deptry", result, argv, "deptry dependency reachability can be incomplete for plugins and dynamic imports.")
-
-
-def _tool_run(name: str, result: dict[str, Any], argv: list[str], limitation: str) -> dict[str, Any]:
-    return {
-        "tool": name,
-        "command": result.get("command", " ".join(argv)),
-        "execution_mode": result.get("execution_mode", "argv-no-shell"),
-        "environment_policy": result.get("environment_policy", {"name": "sanitized-allowlist-v1"}),
-        "exit_code": result.get("exit_code"),
-        "timed_out": result.get("timed_out", False),
-        "redacted": result.get("redacted", False),
-        "status": "completed" if result.get("completed", True) else "failed",
-        "limitations": [limitation],
-    }
+            text = json_path.read_text(encoding="utf-8")
+            signals = parse_deptry_output(text)
+        except OSError as error:
+            contract_error = f"deptry did not create its documented JSON output file: {error}."
+            return [], tool_run(name="deptry", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="unsupported output schema", contract_error=contract_error)
+        except UnsupportedOutputSchema as error:
+            return [], tool_run(name="deptry", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="unsupported output schema", contract_error=str(error))
+    return signals, tool_run(name="deptry", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="available and succeeded")

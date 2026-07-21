@@ -13,7 +13,7 @@ from typing import Any, Callable
 sys.dont_write_bytecode = True
 
 from collectors import builtin, git_history, python as python_collector, typescript
-from security import discover_executable
+from security import discover_executable, mask_secrets
 
 
 EXTERNAL_COLLECTORS: dict[str, Callable[[Path, Path, int], tuple[list[dict[str, Any]], dict[str, Any]]]] = {
@@ -40,7 +40,7 @@ def candidate_key(candidate: dict[str, Any]) -> tuple[str, ...]:
     affected = candidate.get("affected") or {}
     kind = str(affected.get("kind") or "unknown")
     if kind == "dependency":
-        return kind, str(affected.get("dependency") or "").lower()
+        return kind, str(affected.get("path") or "").lower(), str(affected.get("dependency") or "").lower()
     if kind == "symbol":
         return kind, str(affected.get("path") or "").lower(), str(affected.get("symbol") or "")
     return kind, str(affected.get("path") or "").lower()
@@ -55,6 +55,9 @@ def merge_external_signals(candidates: list[dict[str, Any]], signals: list[dict[
             evidence = signal["evidence"]
             if evidence not in existing["evidence_sources"]:
                 existing["evidence_sources"].append(evidence)
+            for question in signal.get("unresolved_questions") or []:
+                if question not in existing["unresolved_questions"]:
+                    existing["unresolved_questions"].append(question)
             continue
         affected = signal["affected"]
         candidate = {
@@ -63,7 +66,10 @@ def merge_external_signals(candidates: list[dict[str, Any]], signals: list[dict[
             "evidence_sources": [signal["evidence"]],
             "confidence": "medium",
             "risk": "medium",
-            "unresolved_questions": ["What runtime, framework, public API, or operational surfaces are outside this collector's model?"],
+            "unresolved_questions": list(dict.fromkeys([
+                "What runtime, framework, public API, or operational surfaces are outside this collector's model?",
+                *(signal.get("unresolved_questions") or []),
+            ])),
             "proof_status": "NOT_RUN",
             "recommendation": "REVIEW",
             "proof_eligible": False,
@@ -87,6 +93,65 @@ def finalize_candidates(candidates: list[dict[str, Any]]) -> None:
         candidate["candidate_id"] = f"CRT-{index:03d}"
 
 
+def collect_external_tools(
+    project: Path,
+    candidates: list[dict[str, Any]],
+    approved: set[str],
+    timeout: int,
+    available_tools: dict[str, str | None],
+) -> list[dict[str, Any]]:
+    tool_runs: list[dict[str, Any]] = []
+    for name, collector in EXTERNAL_COLLECTORS.items():
+        executable_text = available_tools.get(name)
+        if not executable_text:
+            tool_runs.append({
+                "tool": name,
+                "executable": None,
+                "version": None,
+                "status": "unavailable",
+                "approval_granted": name in approved,
+                "execution_mode": "not-run",
+                "environment_policy": {"name": "not-applicable"},
+                "stderr": "",
+                "limitations": ["No existing executable was found; nothing was installed or downloaded."],
+            })
+            continue
+        if name not in approved:
+            tool_runs.append({
+                "tool": name,
+                "executable": executable_text,
+                "version": None,
+                "status": "skipped because approval was not granted",
+                "approval_granted": False,
+                "execution_mode": "not-run",
+                "environment_policy": {"name": "not-applicable"},
+                "stderr": "",
+                "limitations": ["The executable was detected but neither it nor its version command was run without --allow-tool approval."],
+            })
+            continue
+        try:
+            signals, run = collector(project, Path(executable_text), timeout)
+        except Exception as error:  # Keep independent collectors isolated and visible.
+            message, redacted = mask_secrets(str(error))
+            tool_runs.append({
+                "tool": name,
+                "executable": executable_text,
+                "version": None,
+                "status": "failed",
+                "approval_granted": True,
+                "execution_mode": "argv-no-shell",
+                "environment_policy": {"name": "sanitized-allowlist-v1"},
+                "stderr": message,
+                "redacted": redacted,
+                "limitations": ["The collector raised an exception; its partial evidence was discarded."],
+            })
+            continue
+        if run.get("status") == "available and succeeded":
+            merge_external_signals(candidates, signals)
+        tool_runs.append(run)
+    return tool_runs
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project", type=Path, help="Project root to inspect")
@@ -107,26 +172,12 @@ def main() -> int:
     project = args.project.resolve(strict=True)
     collected = builtin.collect(project)
     candidates = collected["candidates"]
-    tool_runs: list[dict[str, Any]] = []
     available_tools: dict[str, str | None] = {}
     for name in EXTERNAL_COLLECTORS:
         executable = discover_executable(project, name)
         available_tools[name] = str(executable) if executable else None
 
-    for name in dict.fromkeys(args.allow_tool):
-        executable = Path(available_tools[name]) if available_tools[name] else None
-        if executable is None:
-            tool_runs.append({
-                "tool": name,
-                "status": "unavailable",
-                "execution_mode": "not-run",
-                "environment_policy": {"name": "not-applicable"},
-                "limitations": ["The tool was approved but no existing executable was found; nothing was installed or downloaded."],
-            })
-            continue
-        signals, tool_run = EXTERNAL_COLLECTORS[name](project, executable, args.tool_timeout)
-        merge_external_signals(candidates, signals)
-        tool_runs.append(tool_run)
+    tool_runs = collect_external_tools(project, candidates, set(args.allow_tool), args.tool_timeout, available_tools)
 
     finalize_candidates(candidates)
     git_run = git_history.collect(project, candidates) if args.include_git_history else {"status": "not-requested"}

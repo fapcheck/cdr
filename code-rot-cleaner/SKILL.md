@@ -47,9 +47,11 @@ Treat file age, last modification, commit frequency, and blame context only as s
 
 Prefer existing ecosystem tools to reimplementing their analysis:
 
-- JavaScript or TypeScript: Knip, TypeScript compiler or project-native typecheck.
-- Python: Vulture, Ruff, and deptry.
+- JavaScript or TypeScript: use Knip as the primary project-graph authority; use a project-native typecheck later as proof, not as a duplicate reachability graph.
+- Python: use Vulture for function, class, method, property, and unreachable-code leads; Ruff for complementary local lint diagnostics; and deptry for dependency evidence.
 - Built-in collector: fallback and cross-check only.
+
+Do not add or improvise a custom TypeScript Compiler API collector unless a current supported Knip release has a reproduced, non-configurable gap that materially changes audit safety. Duplicating Knip's alias, workspace, export, plugin, and framework graph increases drift and inconsistency risk.
 
 First show the exact analyzer command, explain that project configuration can execute code, and request approval. Then name only approved, already-installed tools:
 
@@ -59,7 +61,7 @@ python3 scripts/audit.py /absolute/path/to/project \
   --allow-tool knip --allow-tool vulture
 ```
 
-The script uses argv execution without a shell, a sanitized allow-list environment, secret masking, and no automatic installation. Record missing tools as unavailable instead of downloading them. Treat analyzer disagreement as `REVIEW`.
+The script uses argv execution without a shell, a sanitized allow-list environment, secret masking, and no automatic installation. Vulture is invoked through its Python API adapter, not by parsing terminal prose. Record executable and version, validate documented machine-readable structures, and use only these statuses: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, or `skipped because approval was not granted`. Reject partial, malformed, or unknown output without merging it. Record missing tools as unavailable instead of downloading them. Treat analyzer disagreement as `REVIEW`.
 
 ### 3. Inspect every candidate
 
@@ -99,7 +101,7 @@ Save it as `outputs/code-rot-cleaner/review.json`. Manual decisions may use only
 
 ### 4. Ask before proof commands
 
-Show the exact tests, build, typecheck, and lint commands; why they cover the candidate; expected duration; and the fact that they execute project code in temporary copies. Stop for approval.
+Show the exact tests, build, typecheck, and lint commands; why they cover the candidate; expected duration; and the fact that they execute arbitrary project code in temporary copies with the current user's normal host filesystem, process, and network access. A sanitized environment is not a sandbox. Stop for approval.
 
 After approval, encode commands as argv JSON so shell parsing is avoided:
 
@@ -123,6 +125,7 @@ The proof workflow must:
 5. Create a fresh copy per candidate.
 6. Remove only that candidate in the copy.
 7. Run the same checks and record commands, execution mode, environment policy, output redaction, and limitations.
+8. Bind proof to the exact analysis hash, project root, candidate path, and identical approved command set; any mismatch remains `REVIEW`.
 
 Use `--shell-command` only when argv cannot express a required command. Explain the risk and require a separate approval represented by `--confirm-shell-execution`.
 

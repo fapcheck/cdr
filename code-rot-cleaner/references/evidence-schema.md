@@ -13,7 +13,7 @@ Use this reference when consuming or extending `analysis.json`, `proof.json`, or
 - `summary`: candidate, proof-eligible, proven-removable, review-required, and category counts.
 - `ecosystems`: TypeScript/JavaScript package manager, workspaces, aliases, references, Next/Vite detection, plus Python pyproject, requirements, namespace-package, and CLI-entry data.
 - `available_external_tools`: discovered executable paths or `null`; discovery never installs a tool.
-- `tool_runs`: exact command, execution mode, sanitized environment policy, result, redaction flag, and limitations for approved external collectors.
+- `tool_runs`: detected executable, version, exact command, execution mode, sanitized environment policy, exit result, stderr, redaction flag, limitations, and the fail-closed collector status.
 - `git_history`: optional supporting collector status.
 - `limitations`: scan-wide uncertainty.
 
@@ -28,6 +28,18 @@ Every `candidates[]` item contains:
 - `unresolved_questions[]`.
 - `proof_status`: initially `NOT_RUN`.
 - `recommendation`: initially `REVIEW`.
+
+External collector status is exactly one of:
+
+- `available and succeeded`
+- `unavailable`
+- `failed`
+- `unsupported output schema`
+- `skipped because approval was not granted`
+
+Only `available and succeeded` evidence may be merged or count as a mature family. Additional documented fields are tolerated, but malformed JSON, wrong top-level types, missing required fields, and unknown schemas are rejected.
+
+`proof.json` includes `analysis_sha256` and must match the exact analysis bytes, `project_root`, candidate ID and path, and the full approved/baseline/candidate command identities. A missing or mismatched binding is `INCONCLUSIVE`, never removal proof.
 - `proof_eligible`: whether file-level disposable proof is mechanically supported.
 - `safety`: known state for dynamic usage, external API, and convention roles.
 - `why_suspicious` and `why_might_still_be_needed`.

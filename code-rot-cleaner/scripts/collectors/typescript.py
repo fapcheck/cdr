@@ -7,6 +7,15 @@ import re
 from pathlib import Path
 from typing import Any
 
+from collectors.contracts import (
+    UnsupportedOutputSchema,
+    load_json as load_contract_json,
+    probe_version,
+    require_list,
+    require_mapping,
+    require_string,
+    tool_run,
+)
 from security import run_approved_tool
 
 
@@ -214,48 +223,84 @@ def convention_role(path: Path, root: Path, text: str, context: dict[str, Any]) 
     return None
 
 
-def collect_knip(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    argv = [str(executable), "--reporter", "json", "--no-progress"]
-    result = run_approved_tool(argv, root, timeout)
+def _has_explicit_knip_config(root: Path) -> bool:
+    config_names = {
+        "knip.json", "knip.jsonc", ".knip.json", ".knip.jsonc",
+        "knip.ts", "knip.js", "knip.config.ts", "knip.config.js",
+    }
+    if any((root / name).is_file() for name in config_names):
+        return True
+    manifest = load_json(root / "package.json")
+    return "knip" in manifest
+
+
+def parse_knip_output(text: str, root: Path) -> list[dict[str, Any]]:
+    payload = require_mapping(load_contract_json(text, "Knip"), "Knip output")
+    issues = require_list(payload.get("issues"), "Knip issues")
+    config_question = [] if _has_explicit_knip_config(root) else [
+        "Is Knip's auto-detected entry and project configuration complete for every runtime and framework entry point?",
+    ]
     signals: list[dict[str, Any]] = []
-    try:
-        payload = json.loads(result.get("stdout") or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    for issue in payload.get("issues", []):
-        issue_file = str(issue.get("file") or "package.json").replace("\\", "/")
-        for entry in issue.get("files") or []:
-            path = str(entry.get("name") or issue_file).replace("\\", "/")
+    supported_arrays = {
+        "files", "exports", "types", "nsExports", "nsTypes", "enumMembers",
+        "namespaceMembers", "dependencies", "devDependencies", "optionalPeerDependencies",
+    }
+    for issue_index, raw_issue in enumerate(issues):
+        issue = require_mapping(raw_issue, f"Knip issues[{issue_index}]")
+        issue_file = require_string(issue.get("file"), f"Knip issues[{issue_index}].file").replace("\\", "/")
+        for key in supported_arrays.intersection(issue):
+            require_list(issue[key], f"Knip issues[{issue_index}].{key}")
+        for entry_index, raw_entry in enumerate(issue.get("files") or []):
+            entry = require_mapping(raw_entry, f"Knip issues[{issue_index}].files[{entry_index}]")
+            path = require_string(entry.get("name"), f"Knip issues[{issue_index}].files[{entry_index}].name").replace("\\", "/")
             signals.append({
                 "category": "orphan-file",
                 "affected": {"kind": "file", "path": path},
                 "evidence": {"family": "knip", "source": "knip.files", "signal": "no-usage-evidence", "detail": "Knip reported the file in its files issue set."},
+                "unresolved_questions": list(config_question),
             })
-        for key in ("exports", "types", "nsExports", "nsTypes"):
-            for entry in issue.get(key) or []:
+        for key in ("exports", "types", "nsExports", "nsTypes", "enumMembers", "namespaceMembers"):
+            for entry_index, raw_entry in enumerate(issue.get(key) or []):
+                entry = require_mapping(raw_entry, f"Knip issues[{issue_index}].{key}[{entry_index}]")
+                name = require_string(entry.get("name"), f"Knip issues[{issue_index}].{key}[{entry_index}].name")
+                namespace = entry.get("namespace")
+                symbol = f"{namespace}.{name}" if isinstance(namespace, str) and namespace else name
                 signals.append({
                     "category": "export-no-usage-evidence",
-                    "affected": {"kind": "symbol", "path": issue_file, "symbol": str(entry.get("name") or "<unknown>"), "line": entry.get("line")},
+                    "affected": {"kind": "symbol", "path": issue_file, "symbol": symbol, "line": entry.get("line")},
                     "evidence": {"family": "knip", "source": f"knip.{key}", "signal": "no-usage-evidence", "detail": f"Knip reported this symbol in its {key} issue set."},
                 })
-        for key in ("dependencies", "devDependencies", "optionalPeerDependencies"):
-            for entry in issue.get(key) or []:
-                name = entry.get("name") if isinstance(entry, dict) else entry
-                if name:
-                    signals.append({
-                        "category": "dependency-no-usage-evidence",
-                        "affected": {"kind": "dependency", "path": issue_file, "dependency": str(name)},
-                        "evidence": {"family": "knip", "source": f"knip.{key}", "signal": "no-usage-evidence", "detail": f"Knip reported this package in its {key} issue set."},
-                    })
-    tool_run = {
-        "tool": "knip",
-        "command": result.get("command", " ".join(argv)),
-        "execution_mode": result.get("execution_mode", "argv-no-shell"),
-        "environment_policy": result.get("environment_policy", {"name": "sanitized-allowlist-v1"}),
-        "exit_code": result.get("exit_code"),
-        "timed_out": result.get("timed_out", False),
-        "redacted": result.get("redacted", False),
-        "status": "completed" if result.get("completed", True) else "failed",
-        "limitations": ["Knip configuration can contain executable JavaScript or TypeScript and therefore requires prior approval."],
-    }
-    return signals, tool_run
+        # optionalPeerDependencies means "referenced optional peer dependency" in Knip,
+        # which is the opposite of removal evidence and is intentionally not normalized.
+        for key in ("dependencies", "devDependencies"):
+            for entry_index, raw_entry in enumerate(issue.get(key) or []):
+                entry = require_mapping(raw_entry, f"Knip issues[{issue_index}].{key}[{entry_index}]")
+                name = require_string(entry.get("name"), f"Knip issues[{issue_index}].{key}[{entry_index}].name")
+                signals.append({
+                    "category": "dependency-no-usage-evidence",
+                    "affected": {"kind": "dependency", "path": issue_file, "dependency": name},
+                    "evidence": {"family": "knip", "source": f"knip.{key}", "signal": "no-usage-evidence", "detail": f"Knip reported this package in its {key} issue set."},
+                })
+    return signals
+
+
+def collect_knip(root: Path, executable: Path, timeout: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    limitation = "Knip is the primary JS/TS graph authority, but entry, plugin, framework, and configuration coverage still require review."
+    version, version_result, version_error = probe_version(run_approved_tool, executable, root, timeout, "Knip")
+    if version_error:
+        return [], tool_run(name="knip", executable=executable, version=None, result=version_result, argv=[str(executable), "--version"], limitation=limitation, status="failed", contract_error=version_error)
+    if int(version.split(".", 1)[0]) < 6:
+        return [], tool_run(
+            name="knip", executable=executable, version=version, result=version_result,
+            argv=[str(executable), "--version"], limitation=limitation, status="unsupported output schema",
+            contract_error="This adapter supports Knip's v6 JSON reporter contract; older root-files output is rejected.",
+        )
+    argv = [str(executable), "--reporter", "json", "--no-progress"]
+    result = run_approved_tool(argv, root, timeout, accepted_exit_codes=(0, 1))
+    if not result.get("completed", False):
+        return [], tool_run(name="knip", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="failed")
+    try:
+        signals = parse_knip_output(result.get("stdout") or "", root)
+    except UnsupportedOutputSchema as error:
+        return [], tool_run(name="knip", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="unsupported output schema", contract_error=str(error))
+    return signals, tool_run(name="knip", executable=executable, version=version, result=result, argv=argv, limitation=limitation, status="available and succeeded")

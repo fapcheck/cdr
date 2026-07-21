@@ -21,7 +21,11 @@ Requires explicit approval:
 - running project tests, builds, typechecks, linters, or shell commands;
 - applying exact candidate removals to the real repository.
 
-The built-in scanner is a fallback. Its regex and import-graph observations can never independently produce `SAFE TO REMOVE`. Git age is supporting context only. No static audit guarantees perfect reachability proof; intentional uncertainty protects dynamic, framework, external, and rare operational paths.
+The built-in scanner is a fallback. Its regex and import-graph observations can never independently produce `SAFE TO REMOVE`. Git age is supporting context only. Knip is the primary JS/TS project-graph authority. A second custom TypeScript Compiler API graph is intentionally not maintained because it would duplicate Knip's aliases, workspaces, exports, plugins, and framework model while creating inconsistent results; project-native typechecks remain proof commands, not a competing reachability collector.
+
+For Python, Ruff remains complementary local lint evidence. Optional Vulture analysis uses its Python API through the interpreter associated with an already-installed Vulture executable, scans the selected project Python files together at confidence 60, and normalizes functions, classes, methods, properties, and unreachable code. Vulture is never installed automatically and never supplies removal proof by itself.
+
+External adapters record executable, version, exit status, sanitized stderr, and one of five states: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, or `skipped because approval was not granted`. Documented JSON structures are validated fail-closed; malformed output is not interpreted as an empty successful scan.
 
 ## Install
 
@@ -49,7 +53,16 @@ Use $code-rot-cleaner to audit this repository for code rot. Stay in report-only
 
 Codex first maps entry points, aliases, workspaces, routes, package exports, Python CLI entries, dynamic loading, generated areas, and other false-positive surfaces. It can compare the fallback evidence with already-installed ecosystem analyzers after showing the exact command and receiving approval.
 
-Before proof, Codex asks permission for exact project checks. The proof helper creates an untouched baseline copy, then a fresh copy for each candidate, removes only that candidate, and repeats the same checks. Commands use argv without a shell by default, a sanitized environment, secret masking, path validation, and symlink-escape protection.
+Before proof, Codex asks permission for exact project checks. The proof helper creates an untouched baseline copy, then a fresh copy for each candidate, removes only that candidate, and repeats the same checks. Commands use argv without a shell by default, a sanitized environment, secret masking, path validation, and symlink-escape protection. The proof is cryptographically bound to the exact analysis file, project root, candidate path, and approved command set before it can influence a recommendation.
+
+This is conservatively designed, not a sandbox or a production-grade isolation boundary:
+
+- network isolation is not enforced;
+- approved project commands can execute arbitrary code with the current user's host filesystem and process permissions;
+- a sanitized environment removes common credential variables but is not complete isolation;
+- static analysis cannot observe every dynamic, reflective, external, framework, or operational use;
+- passing checks prove only the behavior those checks exercised;
+- timeouts are not guaranteed to terminate every descendant process on every platform.
 
 Before any real cleanup, Codex stops at `Proposed cleanup` and requires an exact response such as:
 
@@ -71,10 +84,12 @@ code-rot-cleaner/
     |-- proof.py
     |-- report.py
     |-- security.py
+    |-- vulture_adapter.py
     `-- collectors/
         |-- builtin.py
         |-- typescript.py
         |-- python.py
+        |-- contracts.py
         |-- dependencies.py
         `-- git_history.py
 ```

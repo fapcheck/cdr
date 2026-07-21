@@ -23,9 +23,14 @@ SECRET_KEY = re.compile(
 )
 SECRET_PATTERNS = (
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{12,})\b"),
+    re.compile(r"\b(?:npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"(?i)(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/-]{8,}"),
     re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/-]{8,}"),
+    re.compile(r"(?i)((?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)\s*(?:=|:)\s*)[^\s,;]+"),
+    re.compile(r"(?i)((?:--password|--token|--secret|--api[_-]?key|--access[_-]?key)\s+)[^\s]+"),
     re.compile(r"(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s/@:]+:[^\s/@]+@"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
 )
 
 

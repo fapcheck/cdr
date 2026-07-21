@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -16,6 +17,7 @@ sys.dont_write_bytecode = True
 
 
 MATURE_FAMILIES = {"knip", "vulture", "ruff", "deptry", "typescript-compiler", "project-native"}
+EXTERNAL_MATURE_FAMILIES = {"knip", "vulture", "ruff", "deptry"}
 
 
 def safe_wording(value: Any) -> str:
@@ -49,8 +51,73 @@ def proof_result(candidate_id: str, proof: dict[str, Any] | None) -> dict[str, A
     return next((item for item in proof.get("results", []) if item.get("candidate_id") == candidate_id), None)
 
 
+def command_identity(command: Any) -> tuple[str, str, str]:
+    if not isinstance(command, dict):
+        return "<invalid>", "", ""
+    return (
+        str(command.get("kind") or "other"),
+        str(command.get("command") or ""),
+        str(command.get("execution_mode") or ""),
+    )
+
+
+def validate_proof(analysis: dict[str, Any], analysis_path: Path, proof: dict[str, Any] | None) -> list[str]:
+    if proof is None:
+        return []
+    errors: list[str] = []
+    if proof.get("schema_version") != "2.0":
+        errors.append("Proof schema_version is unsupported.")
+    digest = hashlib.sha256(analysis_path.read_bytes()).hexdigest()
+    if proof.get("analysis_sha256") != digest:
+        errors.append("Proof is not bound to the exact analysis file.")
+    try:
+        proof_root = Path(str(proof.get("project_root") or "")).resolve()
+        analysis_root = Path(str(analysis.get("project_root") or "")).resolve()
+    except (OSError, ValueError):
+        errors.append("Proof or analysis project_root is invalid.")
+    else:
+        if proof_root != analysis_root:
+            errors.append("Proof project_root does not match the analysis.")
+    requested = proof.get("commands_requested")
+    baseline_record = proof.get("baseline")
+    if not isinstance(baseline_record, dict):
+        errors.append("Proof baseline must be an object.")
+        baseline_record = {}
+    baseline = baseline_record.get("commands")
+    if not isinstance(requested, list) or not requested:
+        errors.append("Proof has no approved command set.")
+        requested = []
+    if not isinstance(baseline, list) or not baseline:
+        errors.append("Proof has no completed baseline command set.")
+        baseline = []
+    if [command_identity(item) for item in requested] != [command_identity(item) for item in baseline]:
+        errors.append("Baseline commands do not match the approved command set.")
+    candidates = {
+        item.get("candidate_id"): str((item.get("affected") or {}).get("path") or "")
+        for item in analysis.get("candidates", [])
+    }
+    results = proof.get("results")
+    if not isinstance(results, list):
+        errors.append("Proof results must be an array.")
+        return errors
+    ids = [item.get("candidate_id") for item in results if isinstance(item, dict)]
+    if len(ids) != len(set(ids)):
+        errors.append("Proof contains duplicate candidate results.")
+    for item in results:
+        if not isinstance(item, dict):
+            errors.append("Proof contains a non-object candidate result.")
+            continue
+        candidate_id = item.get("candidate_id")
+        if candidate_id not in candidates:
+            errors.append("Proof contains an unknown candidate result.")
+        elif item.get("path") != candidates[candidate_id]:
+            errors.append(f"Proof path does not match {candidate_id}.")
+    return errors
+
+
 def derive_recommendation(candidate: dict[str, Any], proof: dict[str, Any] | None,
-                          decisions: dict[str, dict[str, Any]]) -> tuple[str, str, str]:
+                          decisions: dict[str, dict[str, Any]], *, proof_errors: list[str] | None = None,
+                          successful_tool_families: set[str] | None = None) -> tuple[str, str, str]:
     candidate_id = candidate["candidate_id"]
     decision = decisions.get(candidate_id)
     if decision:
@@ -59,6 +126,8 @@ def derive_recommendation(candidate: dict[str, Any], proof: dict[str, Any] | Non
         if recommendation not in {"KEEP", "REVIEW"} or not reason:
             raise ValueError(f"Manual decision for {candidate_id} must be KEEP or REVIEW and include a reason.")
         return recommendation, "MANUALLY_REVIEWED", reason
+    if proof_errors:
+        return "REVIEW", "INCONCLUSIVE", proof_errors[0]
     result = proof_result(candidate_id, proof)
     if result and result.get("outcome") == "FAILED_AFTER_REMOVAL":
         return "KEEP", "FAILED", "An approved check failed after removing only this candidate."
@@ -66,8 +135,17 @@ def derive_recommendation(candidate: dict[str, Any], proof: dict[str, Any] | Non
         return "REVIEW", "NOT_RUN", "No successful disposable-copy proof is available."
     if result.get("outcome") != "PASSED_IN_DISPOSABLE_COPY":
         return "REVIEW", "INCONCLUSIVE", str(result.get("reason") or "Disposable-copy proof was inconclusive.")
+    requested_commands = [command_identity(item) for item in proof.get("commands_requested", [])]
+    result_commands = [command_identity(item) for item in result.get("commands", [])]
+    if not requested_commands or result_commands != requested_commands:
+        return "REVIEW", "INCONCLUSIVE", "Candidate commands do not match the approved proof command set."
 
     families = {item.get("family") for item in candidate.get("evidence_sources", []) if item.get("family") != "git"}
+    successful_tool_families = successful_tool_families or set()
+    families = {
+        family for family in families
+        if family not in EXTERNAL_MATURE_FAMILIES or family in successful_tool_families
+    }
     safety = candidate.get("safety") or {}
     commands = result.get("commands") or []
     safe = (
@@ -103,25 +181,47 @@ def main() -> int:
     analysis = json.loads(args.analysis.read_text(encoding="utf-8"))
     if analysis.get("schema_version") != "2.0":
         raise SystemExit("Report requires analysis schema_version 2.0.")
-    proof = json.loads(args.proof.read_text(encoding="utf-8")) if args.proof else None
+    raw_proof = json.loads(args.proof.read_text(encoding="utf-8")) if args.proof else None
+    proof = raw_proof if isinstance(raw_proof, dict) else ({} if args.proof else None)
+    proof_errors = (["Proof top-level value must be an object."] if args.proof and not isinstance(raw_proof, dict) else [])
+    proof_errors.extend(validate_proof(analysis, args.analysis, proof))
     review = json.loads(args.review.read_text(encoding="utf-8")) if args.review else {"decisions": []}
     decisions = {item["candidate_id"]: item for item in review.get("decisions", [])}
+    successful_tool_families = {
+        str(run.get("tool")) for run in analysis.get("tool_runs", [])
+        if run.get("status") == "available and succeeded"
+    }
     rows: list[dict[str, Any]] = []
     for candidate in analysis.get("candidates", []):
-        recommendation, status, reason = derive_recommendation(candidate, proof, decisions)
+        recommendation, status, reason = derive_recommendation(
+            candidate, proof, decisions, proof_errors=proof_errors,
+            successful_tool_families=successful_tool_families,
+        )
         rows.append({**candidate, "recommendation": recommendation, "proof_status": status, "recommendation_reason": reason})
 
     counts = Counter(row["recommendation"] for row in rows)
     safe_rows = [row for row in rows if row["recommendation"] == "SAFE TO REMOVE"]
     review_rows = [row for row in rows if row["recommendation"] == "REVIEW"]
     keep_rows = [row for row in rows if row["recommendation"] == "KEEP"]
+    incomplete_external = any(
+        run.get("approval_granted") and run.get("status") != "available and succeeded"
+        for run in analysis.get("tool_runs", [])
+    )
     state = "PROOF COMPLETE" if proof else "REPORT READY"
-    if proof and not proof.get("baseline", {}).get("passed"):
+    if incomplete_external:
+        state = "INCOMPLETE EXTERNAL EVIDENCE"
+    baseline = proof.get("baseline") if isinstance(proof, dict) else None
+    baseline_passed = isinstance(baseline, dict) and bool(baseline.get("passed"))
+    if args.proof and (proof_errors or not baseline_passed):
         state = "INCONCLUSIVE"
+    execution_note = (
+        "Approved proof commands ran in disposable copies but retained normal host access."
+        if args.proof else "No project proof commands were run."
+    )
     lines = [
         "# Code Rot Audit Report",
         "",
-        f"> **{state}** - The real project was not changed.",
+        f"> **{state}** - The audit is report-only. {execution_note}",
         "",
         "## Summary",
         "",
@@ -146,17 +246,27 @@ def main() -> int:
                 f"### {safe_wording(run.get('tool', 'tool'))}",
                 "",
                 f"- Command executed: `{safe_wording(run.get('command', 'not run'))}`",
+                f"- Executable: `{safe_wording(run.get('executable') or 'not found')}`",
+                f"- Version: `{safe_wording(run.get('version') or 'not queried')}`",
                 f"- Execution mode: `{safe_wording(run.get('execution_mode', 'not-run'))}`",
                 f"- Environment policy: `{safe_wording(policy.get('name', 'unknown'))}`",
                 f"- Result: `{safe_wording(run.get('status', 'unknown'))}`",
+                f"- Exit code: `{safe_wording(run.get('exit_code', 'not run'))}`",
+                f"- Timed out: `{safe_wording(run.get('timed_out', False))}`",
             ])
+            if run.get("stderr"):
+                lines.append(f"- Stderr: `{safe_wording(run['stderr'])}`")
             for limitation in run.get("limitations", []):
                 lines.append(f"- Limitation: {safe_wording(limitation)}")
             lines.append("")
 
-    if proof:
+    if args.proof:
         lines.extend(["## Disposable-copy proof", ""])
-        baseline = proof.get("baseline") or {}
+        for error in proof_errors:
+            lines.append(f"- Proof validation error: {safe_wording(error)}")
+        if proof_errors:
+            lines.append("")
+        baseline = proof.get("baseline") if isinstance(proof.get("baseline"), dict) else {}
         lines.append(f"Baseline: **{'PASSED' if baseline.get('passed') else 'FAILED'}**")
         lines.extend(["", "| Check | Command executed | Execution mode | Environment policy | Result |", "|---|---|---|---|---|"])
         for command in baseline.get("commands", []):

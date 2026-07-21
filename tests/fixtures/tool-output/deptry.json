@@ -1,0 +1,27 @@
+[
+  {
+    "error": {
+      "code": "DEP002",
+      "message": "'legacy-package' defined as a dependency but not used in the codebase"
+    },
+    "module": "legacy-package",
+    "location": {
+      "file": "pyproject.toml",
+      "line": 14,
+      "column": 5
+    },
+    "future_field": "allowed"
+  },
+  {
+    "error": {
+      "code": "DEP001",
+      "message": "'requests' imported but missing from the dependency definitions"
+    },
+    "module": "requests",
+    "location": {
+      "file": "src/app.py",
+      "line": 3,
+      "column": 1
+    }
+  }
+]

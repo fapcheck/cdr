@@ -1,6 +1,6 @@
 {
   "name": "codex-code-rot-cleaner",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A conservative Codex Skill for evidence-first code rot audits and disposable-copy removal proof.",
   "license": "MIT",
   "author": "Francesco Mistero",

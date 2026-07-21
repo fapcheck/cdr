@@ -1,0 +1,49 @@
+{
+  "issues": [
+    {
+      "file": "src/legacy.ts",
+      "files": [
+        {"name": "src/legacy.ts"}
+      ],
+      "exports": [],
+      "types": [],
+      "nsExports": [],
+      "nsTypes": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "optionalPeerDependencies": [],
+      "futureDocumentedField": []
+    },
+    {
+      "file": "src/math.ts",
+      "files": [],
+      "exports": [
+        {"name": "factorial", "line": 12, "col": 14, "pos": 256}
+      ],
+      "types": [
+        {"name": "Radians", "line": 20, "col": 13, "pos": 410}
+      ],
+      "nsExports": [],
+      "nsTypes": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "optionalPeerDependencies": []
+    },
+    {
+      "file": "package.json",
+      "files": [],
+      "exports": [],
+      "types": [],
+      "nsExports": [],
+      "nsTypes": [],
+      "dependencies": [
+        {"name": "lodash"}
+      ],
+      "devDependencies": [
+        {"name": "rimraf"}
+      ],
+      "optionalPeerDependencies": []
+    }
+  ],
+  "futureTopLevelField": {"allowed": true}
+}

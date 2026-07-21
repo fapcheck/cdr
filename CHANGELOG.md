@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 - 2026-07-22
+
+- Replaced Vulture terminal-text parsing with an optional Python API adapter at confidence 60 and added versioned function, class, method, property, and unreachable-code evidence.
+- Added strict version/output contracts and fail-closed statuses for Knip, Ruff, deptry, and Vulture; failed or malformed collectors no longer contribute evidence.
+- Corrected Knip optional-peer semantics, workspace dependency identity, missing-entry configuration uncertainty, and additional symbol issue normalization.
+- Bound disposable-copy proof to the exact analysis, project, candidate path, and command set before `SAFE TO REMOVE` is possible.
+- Expanded captured contract, collector isolation, tamper, dynamic Python, public API, CLI, workspace, and redaction tests.
+- Clarified that Knip is the primary JS/TS graph authority and that disposable copies and sanitized environments are not sandboxes.
+
 ## 0.2.0 - 2026-07-22
 
 - Reframed the Skill as a conservative evidence-first Code Rot Audit.

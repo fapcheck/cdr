@@ -1,0 +1,80 @@
+{
+  "schema_version": "vulture-api-v1",
+  "tool_version": "2.14",
+  "items": [
+    {
+      "name": "stale_function",
+      "type": "function",
+      "filename": "app/stale.py",
+      "first_lineno": 4,
+      "last_lineno": 7,
+      "size": 4,
+      "confidence": 60
+    },
+    {
+      "name": "StaleClass",
+      "type": "class",
+      "filename": "app/stale.py",
+      "first_lineno": 10,
+      "last_lineno": 18,
+      "size": 9,
+      "confidence": 60
+    },
+    {
+      "name": "stale_method",
+      "type": "method",
+      "filename": "app/stale.py",
+      "first_lineno": 12,
+      "last_lineno": 13,
+      "size": 2,
+      "confidence": 60
+    },
+    {
+      "name": "stale_property",
+      "type": "property",
+      "filename": "app/stale.py",
+      "first_lineno": 15,
+      "last_lineno": 18,
+      "size": 4,
+      "confidence": 60
+    },
+    {
+      "name": "return",
+      "type": "unreachable_code",
+      "filename": "app/stale.py",
+      "first_lineno": 22,
+      "last_lineno": 23,
+      "size": 2,
+      "confidence": 100,
+      "future_field": "allowed"
+    },
+    {
+      "name": "main",
+      "type": "function",
+      "filename": "app/cli.py",
+      "first_lineno": 1,
+      "last_lineno": 2,
+      "size": 2,
+      "confidence": 60
+    },
+    {
+      "name": "dynamic_hook",
+      "type": "function",
+      "filename": "app/dynamic_loader.py",
+      "first_lineno": 5,
+      "last_lineno": 6,
+      "size": 2,
+      "confidence": 60
+    },
+    {
+      "name": "public_hook",
+      "type": "function",
+      "filename": "public_pkg/exported.py",
+      "first_lineno": 1,
+      "last_lineno": 2,
+      "size": 2,
+      "confidence": 60
+    }
+  ],
+  "future_top_level_field": true
+}
