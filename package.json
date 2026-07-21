@@ -1,6 +1,6 @@
 {
   "name": "codex-code-rot-cleaner",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A conservative Codex Skill for evidence-first code rot audits and disposable-copy removal proof.",
   "license": "MIT",
   "author": "Francesco Mistero",
@@ -16,10 +16,11 @@
     "codex-code-rot-cleaner": "scripts/install.js"
   },
   "files": [
+    "cdr/SKILL.md",
+    "cdr/agents",
+    "cdr/references",
+    "cdr/scripts/**/*.py",
     "code-rot-cleaner/SKILL.md",
-    "code-rot-cleaner/agents",
-    "code-rot-cleaner/references",
-    "code-rot-cleaner/scripts/**/*.py",
     "scripts/install.js",
     "README.md",
     "CHANGELOG.md",

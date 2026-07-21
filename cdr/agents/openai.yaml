@@ -1,0 +1,4 @@
+interface:
+  display_name: "cdr"
+  short_description: "Audit removable code with conservative proof"
+  default_prompt: "Use $cdr to audit this repository for code rot. Stay in report-only mode, do not run project commands, and do not change project files."

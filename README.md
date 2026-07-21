@@ -6,7 +6,7 @@ This remains a Codex-native Skill. `SKILL.md` is the behavioral entry point, `ag
 
 ## Safety model
 
-Calling `$code-rot-cleaner` starts in report-only mode.
+Calling `$cdr` starts in report-only mode. `$code-rot-cleaner` remains supported as a legacy alias and delegates to the same canonical workflow.
 
 Allowed by default:
 
@@ -39,6 +39,7 @@ Or install manually:
 git clone https://github.com/Kappaemme-git/codex-code-rot-cleaner.git
 mkdir -p ~/.codex/skills
 cp -R codex-code-rot-cleaner/code-rot-cleaner ~/.codex/skills/code-rot-cleaner
+cp -R codex-code-rot-cleaner/cdr ~/.codex/skills/cdr
 ```
 
 Restart Codex after installation.
@@ -48,8 +49,12 @@ Restart Codex after installation.
 Open a repository in Codex and invoke:
 
 ```text
-Use $code-rot-cleaner to audit this repository for code rot. Stay in report-only mode and do not change project files.
+Use $cdr to audit this repository for code rot. Stay in report-only mode, do not run project commands, and do not change project files.
 ```
+
+The supported short invocation is `$cdr`. `$code-rot-cleaner` remains available for compatibility. In clients that surface enabled skills in a slash picker, typing `/` may show the enabled `cdr` skill for discovery; this does not mean literal `/cdr` is a supported custom command. Custom prompts, where available, use `/prompts:<name>`, and this package does not install one.
+
+The npm executable only installs the two Codex Skill entries. No standalone CLI cleanup behavior was added.
 
 Codex first maps entry points, aliases, workspaces, routes, package exports, Python CLI entries, dynamic loading, generated areas, and other false-positive surfaces. It can compare the fallback evidence with already-installed ecosystem analyzers after showing the exact command and receiving approval.
 
@@ -73,7 +78,7 @@ Approve CRT-001, CRT-004
 ## Skill architecture
 
 ```text
-code-rot-cleaner/
+cdr/
 |-- SKILL.md
 |-- agents/openai.yaml
 |-- references/
@@ -92,6 +97,9 @@ code-rot-cleaner/
         |-- contracts.py
         |-- dependencies.py
         `-- git_history.py
+
+code-rot-cleaner/
+`-- SKILL.md  # minimal legacy alias delegating to $cdr
 ```
 
 The legacy script names remain as compatibility wrappers.

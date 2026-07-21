@@ -14,7 +14,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "code-rot-cleaner"
+SKILL = ROOT / "cdr"
 SCRIPTS = SKILL / "scripts"
 TS_FIXTURE = ROOT / "tests" / "fixtures" / "typescript-project"
 PY_FIXTURE = ROOT / "tests" / "fixtures" / "python-audit-project"
@@ -341,26 +341,121 @@ class CodeRotCleanerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         payload = json.loads(result.stdout)
         packaged_paths = {item["path"] for item in payload[0]["files"]}
+        self.assertIn("cdr/SKILL.md", packaged_paths)
+        self.assertIn("cdr/scripts/audit.py", packaged_paths)
+        self.assertIn("cdr/references/detection-playbook.md", packaged_paths)
+        self.assertIn("code-rot-cleaner/SKILL.md", packaged_paths)
+        self.assertFalse(any(path.startswith("code-rot-cleaner/scripts/") for path in packaged_paths))
+        self.assertFalse(any(path.startswith("code-rot-cleaner/references/") for path in packaged_paths))
         self.assertFalse(any("__pycache__" in path or path.endswith(".pyc") for path in packaged_paths))
+        forbidden_fragments = ("outputs/", "analysis.json", "proof.json", "cleanup-plan", ".env", "secret")
+        self.assertFalse(any(fragment in path.lower() for path in packaged_paths for fragment in forbidden_fragments))
 
-    def test_installer_preserves_skill_architecture_without_bytecode(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            skills_dir = Path(temp) / "skills"
-            result = subprocess.run(
+    def test_release_layout_has_one_canonical_implementation_and_a_delegating_alias(self) -> None:
+        canonical = ROOT / "cdr"
+        legacy = ROOT / "code-rot-cleaner"
+
+        canonical_skill = (canonical / "SKILL.md").read_text(encoding="utf-8")
+        legacy_skill = (legacy / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("\nname: cdr\n", canonical_skill)
+        self.assertIn("\nname: code-rot-cleaner\n", legacy_skill)
+        self.assertIn("$cdr", legacy_skill)
+        self.assertIn("report-only", legacy_skill.lower())
+        self.assertIn("approval", legacy_skill.lower())
+        self.assertTrue((canonical / "agents" / "openai.yaml").is_file())
+        self.assertTrue((canonical / "scripts" / "audit.py").is_file())
+        self.assertTrue((canonical / "scripts" / "proof.py").is_file())
+        self.assertTrue((canonical / "scripts" / "report.py").is_file())
+        self.assertTrue((canonical / "references" / "detection-playbook.md").is_file())
+        self.assertFalse((legacy / "scripts").exists())
+        self.assertFalse((legacy / "references").exists())
+
+    def test_installer_creates_both_skills_replaces_only_them_and_supports_spaces(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cdr installer smoke ") as temp:
+            skills_dir = Path(temp) / "skills with spaces"
+            unrelated = skills_dir / "unrelated-skill"
+            unrelated.mkdir(parents=True)
+            (unrelated / "SKILL.md").write_text("unrelated\n", encoding="utf-8")
+
+            first = subprocess.run(
                 ["node", str(ROOT / "scripts" / "install.js"), "--skills-dir", str(skills_dir)],
                 cwd=ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-            installed = skills_dir / "code-rot-cleaner"
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertTrue((installed / "SKILL.md").is_file())
-            self.assertTrue((installed / "agents" / "openai.yaml").is_file())
-            self.assertTrue((installed / "scripts" / "audit.py").is_file())
-            self.assertEqual(list(installed.rglob("__pycache__")), [])
-            self.assertEqual(list(installed.rglob("*.pyc")), [])
-            self.assertIn("audit possible code rot", result.stdout)
+            self.assertEqual(first.returncode, 0, first.stdout)
+
+            canonical = skills_dir / "cdr"
+            legacy = skills_dir / "code-rot-cleaner"
+            (canonical / "stale.txt").write_text("replace me\n", encoding="utf-8")
+            (legacy / "stale.txt").write_text("replace me\n", encoding="utf-8")
+            second = subprocess.run(
+                ["node", str(ROOT / "scripts" / "install.js"), "--skills-dir", str(skills_dir)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+
+            self.assertEqual(second.returncode, 0, second.stdout)
+            self.assertTrue((canonical / "SKILL.md").is_file())
+            self.assertTrue((canonical / "agents" / "openai.yaml").is_file())
+            self.assertTrue((canonical / "scripts" / "audit.py").is_file())
+            self.assertTrue((canonical / "references" / "evidence-schema.md").is_file())
+            self.assertTrue((legacy / "SKILL.md").is_file())
+            self.assertFalse((legacy / "scripts").exists())
+            self.assertFalse((legacy / "references").exists())
+            self.assertFalse((canonical / "stale.txt").exists())
+            self.assertFalse((legacy / "stale.txt").exists())
+            self.assertEqual((unrelated / "SKILL.md").read_text(encoding="utf-8"), "unrelated\n")
+            self.assertEqual(list(canonical.rglob("__pycache__")), [])
+            self.assertEqual(list(canonical.rglob("*.pyc")), [])
+            self.assertIn("$cdr", second.stdout)
+            self.assertIn("primary", second.stdout.lower())
+            self.assertIn("$code-rot-cleaner", second.stdout)
+            self.assertIn("legacy alias", second.stdout.lower())
+
+    def test_installed_canonical_skill_runs_report_only_audit_and_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cdr report smoke ") as temp:
+            root = Path(temp)
+            skills_dir = root / "installed skills"
+            project = root / "source project"
+            project.mkdir()
+            source = project / "live.py"
+            source.write_text("print('live')\n", encoding="utf-8")
+            before = source.read_bytes()
+            install = subprocess.run(
+                ["node", str(ROOT / "scripts" / "install.js"), "--skills-dir", str(skills_dir)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(install.returncode, 0, install.stdout)
+
+            installed_scripts = skills_dir / "cdr" / "scripts"
+            analysis = root / "analysis.json"
+            report = root / "report.md"
+            plan = root / "plan.csv"
+            audit = subprocess.run(
+                [sys.executable, str(installed_scripts / "audit.py"), str(project), str(analysis)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(audit.returncode, 0, audit.stdout)
+            generate = subprocess.run(
+                [sys.executable, str(installed_scripts / "report.py"), str(analysis), str(report), str(plan)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(generate.returncode, 0, generate.stdout)
+            self.assertEqual(json.loads(analysis.read_text(encoding="utf-8"))["mode"], "report-only")
+            self.assertTrue(report.is_file())
+            self.assertTrue(plan.is_file())
+            self.assertEqual(source.read_bytes(), before)
 
     def test_git_history_is_supporting_and_skips_untracked_files(self) -> None:
         git_history = load_module("git_history_collector", SCRIPTS / "collectors" / "git_history.py")

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Code Rot Audit"
-  short_description: "Audit removable code with conservative proof"
-  default_prompt: "Use $code-rot-cleaner to audit possible code rot in report-only mode without changing project files."

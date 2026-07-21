@@ -61,6 +61,12 @@ function copyDirectory(source, destination) {
   }
 }
 
+function installSkill(source, destination) {
+  if (!fs.existsSync(source)) throw new Error(`Cannot find bundled skill at ${source}`);
+  fs.rmSync(destination, { recursive: true, force: true });
+  copyDirectory(source, destination);
+}
+
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
@@ -68,20 +74,23 @@ function main() {
     return;
   }
 
-  const source = path.resolve(__dirname, "..", "code-rot-cleaner");
+  const packageRoot = path.resolve(__dirname, "..");
+  const canonicalSource = path.join(packageRoot, "cdr");
+  const legacySource = path.join(packageRoot, "code-rot-cleaner");
   const skillsDir = path.resolve(options.skillsDir || defaultSkillsDir());
-  const destination = path.join(skillsDir, "code-rot-cleaner");
-  if (!fs.existsSync(source)) throw new Error(`Cannot find bundled skill at ${source}`);
+  const canonicalDestination = path.join(skillsDir, "cdr");
+  const legacyDestination = path.join(skillsDir, "code-rot-cleaner");
 
   fs.mkdirSync(skillsDir, { recursive: true });
-  fs.rmSync(destination, { recursive: true, force: true });
-  copyDirectory(source, destination);
+  installSkill(canonicalSource, canonicalDestination);
+  installSkill(legacySource, legacyDestination);
 
-  console.log("Installed code-rot-cleaner skill.");
-  console.log(`Location: ${destination}`);
+  console.log("Installed Codex skills:");
+  console.log(`  Primary $cdr: ${canonicalDestination}`);
+  console.log(`  Legacy alias $code-rot-cleaner: ${legacyDestination}`);
   console.log("");
-  console.log("Restart Codex, then run:");
-  console.log("  Use $code-rot-cleaner to audit possible code rot in report-only mode.");
+  console.log("Use $cdr to audit possible code rot in report-only mode.");
+  console.log("Codex usually detects skill changes automatically. If $cdr does not appear, restart Codex.");
 }
 
 try {

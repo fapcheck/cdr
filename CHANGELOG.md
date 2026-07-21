@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 - 2026-07-22
+
+- Added `$cdr` as the canonical short Codex Skill invocation while preserving `$code-rot-cleaner` as a minimal delegating alias.
+- Updated the installer and npm package to install both skill entries without symlinks or duplicated analyzer code.
+- Clarified that skills use `$skill-name`, slash UI may expose skill discovery, and literal `/cdr` is not promised as a custom command.
+- Added coverage for dual installation, paths containing spaces, scoped reinstallation, package contents, and installed report-only execution.
+
 ## 0.2.1 - 2026-07-22
 
 - Replaced Vulture terminal-text parsing with an optional Python API adapter at confidence 60 and added versioned function, class, method, property, and unreachable-code evidence.
