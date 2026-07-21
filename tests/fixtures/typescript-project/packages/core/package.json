@@ -1,0 +1,6 @@
+{
+  "name": "@fixture/core",
+  "exports": {
+    "./live": "./src/live.ts"
+  }
+}

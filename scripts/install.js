@@ -53,6 +53,7 @@ function defaultSkillsDir() {
 function copyDirectory(source, destination) {
   fs.mkdirSync(destination, { recursive: true });
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    if (entry.name === "__pycache__" || entry.name.endsWith(".pyc")) continue;
     const sourcePath = path.join(source, entry.name);
     const destinationPath = path.join(destination, entry.name);
     if (entry.isDirectory()) copyDirectory(sourcePath, destinationPath);
@@ -80,7 +81,7 @@ function main() {
   console.log(`Location: ${destination}`);
   console.log("");
   console.log("Restart Codex, then run:");
-  console.log("  Use $code-rot-cleaner to find code this project no longer needs.");
+  console.log("  Use $code-rot-cleaner to audit possible code rot in report-only mode.");
 }
 
 try {

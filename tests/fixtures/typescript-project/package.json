@@ -1,0 +1,9 @@
+{
+  "name": "audit-fixture",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "next": "1.0.0",
+    "vite": "1.0.0"
+  }
+}

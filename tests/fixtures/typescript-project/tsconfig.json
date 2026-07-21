@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["packages/core/src/*"]
+    }
+  },
+  "references": [{"path": "packages/core"}]
+}

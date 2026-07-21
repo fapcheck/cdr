@@ -1,51 +1,67 @@
 # Detection playbook
 
-Use this reference when reviewing scanner candidates. A file is not dead merely because no ordinary import points to it.
+Use this checklist when manually reviewing candidates. Missing ordinary imports is a lead, not proof.
 
 ## Evidence ladder
 
-Prefer multiple independent signals:
+1. Map source roots, manifests, package boundaries, entry points, generated areas, and Git state.
+2. Resolve ordinary imports, aliases, relative imports, re-exports, and literal dynamic imports.
+3. Search paths, basenames, symbols, registries, templates, package scripts, config, and deployment files.
+4. Exclude framework, plugin, migration, worker, script, test-discovery, generated, and CLI conventions.
+5. Compare the built-in fallback with an existing mature analyzer.
+6. Inspect public API and external-consumer risk.
+7. Establish an untouched disposable-copy baseline with approved relevant checks.
+8. Remove one candidate in a fresh copy and repeat exactly those checks.
 
-1. The file or symbol is outside known entry points and has no static inbound reference.
-2. Repository-wide search finds no path, basename, symbol, registry, route, template, or configuration reference.
-3. Framework conventions do not make it discoverable.
-4. Project-native dead-code tooling agrees.
-5. Removing it in a disposable copy preserves an already-green baseline across relevant tests, build, typecheck, and lint.
-6. Coverage or runtime traces show no reachability under representative workloads.
+No single rung proves removal. Incomplete tests, optional features, rare operations, platform branches, and downstream consumers reduce confidence.
 
-Only file-level candidates with strong signals through step 5 are normally eligible for `SAFE TO REMOVE`. Incomplete tests, optional features, platform-specific code, and rare operational paths lower confidence.
+## JavaScript and TypeScript
 
-## Common false positives
+Check:
 
-- Route-by-filename systems: Next.js `app/` and `pages/`, Remix routes, Nuxt pages/server routes, SvelteKit routes, Astro pages, Rails controllers/jobs, Django management commands, Laravel conventions.
-- Plugin and registry loading: glob imports, package metadata entry points, dependency injection, reflection, decorators, annotations, service loaders, test discovery, Storybook stories, migrations, seeds, workers, cron jobs, and queue handlers.
-- String reachability: `import()`, `require()` with variables, filesystem paths, template names, event names, command names, serialized class names, native bridges, and environment-selected modules.
-- Packaging: `main`, `module`, `browser`, `bin`, `exports`, `files`, side-effect CSS, postinstall scripts, peer dependencies, optional dependencies, and bundler plugins.
-- Public libraries: exported symbols may be consumed by downstream users without an in-repository reference.
-- Platform branches: mobile, browser, server, OS, architecture, enterprise, feature-flag, and locale-specific code.
+- npm, pnpm, yarn, lockfiles, package-manager declarations, and lifecycle scripts;
+- workspaces, monorepo package boundaries, package `main`, `module`, `browser`, `bin`, `exports`, `files`, peers, optionals, and side effects;
+- `tsconfig` `baseUrl`, `paths`, `references`, and framework-specific config;
+- barrel modules and re-exports;
+- literal and non-literal `import()` or `require()` calls;
+- Next.js app/pages/API routes, middleware, layouts, loaders, Vite entry HTML and config, workers, Storybook, migrations, plugins, seeds, and generated modules;
+- public packages whose exports can be used outside the repository.
 
-## Category rules
+Prefer Knip and project-native TypeScript checks when already available. Knip config can execute JavaScript or TypeScript, so request approval before running it. Never use an autofix flag.
 
-### Orphan files
+## Python
 
-High confidence requires no inbound import, no filename convention, no string reference, no package entry, and no generated or operational role. Treat library public surfaces and framework roots as `REVIEW` even when isolated.
+Check:
 
-### Unused exports
+- regular, relative, and dynamic imports;
+- packages with `__init__.py`, namespace packages without it, and multiple source roots;
+- `pyproject.toml`, requirements files, dependency groups, setup metadata, and package-data loading;
+- console and GUI scripts, plugin entry-point groups, management commands, migrations, workers, and test discovery;
+- importlib, decorators, registries, reflection, string class paths, and framework conventions;
+- downstream package consumers.
 
-A missing in-repository reference is weak evidence. Re-exports, declaration generation, public APIs, reflection, templates, tests, and external consumers can use the symbol. Prefer project-native compiler or Knip evidence and prove the precise edit.
+Prefer Vulture for symbol leads, Ruff for related local lint evidence, and deptry for dependency evidence when already installed. Their findings remain `REVIEW` until corroborated and proved.
 
-### Unused dependencies
+## Git context
 
-Search source, config, scripts, lockfile metadata, peer relationships, CLIs, loaders, presets, plugins, and package-manager hooks. Do not remove from a manifest or regenerate a lockfile without explicit approval.
-
-### Duplicates
-
-Duplicate code is a maintenance candidate, not automatically dead. Preserve the canonical implementation, behavior differences, ownership boundaries, bundle boundaries, and import direction. Exact duplicate files stay `REVIEW` until callers can converge safely.
-
-### Commented code and stale scaffolding
-
-Comments that resemble code can document examples, protocols, queries, or migration steps. Use history and surrounding intent. Never delete licenses, security notes, compatibility workarounds, or operational instructions as “rot.”
+Use file age, first/last modification, commit frequency, and blame context to understand ownership and intent. Inspect the introducing change when it can clarify a migration or compatibility path. Never infer dead code from age, low churn, or an old author.
 
 ## Proof quality
 
-The baseline must pass before a candidate is evaluated. Use commands relevant to the candidate's runtime surface. A frontend build does not prove a worker is unused; unit tests do not prove packaging; a typecheck does not execute side effects. Record missing coverage and rare-path risk explicitly.
+Match commands to the candidate's actual surface:
+
+- typecheck for type reachability;
+- build for packaging and bundling;
+- tests for behavior they actually exercise;
+- lint for supported local consistency checks.
+
+A frontend build does not prove a worker is irrelevant. Unit tests do not prove packaging. A typecheck does not execute side effects. Treat a failing untouched baseline separately and do not evaluate removals against it.
+
+## Security review
+
+- Use argv execution and `shell=False` by default.
+- Sanitize the environment and mask secret values in recorded output.
+- Reject traversal and symlink escapes before copying or removing candidates.
+- Show exact commands and limitations before approval.
+- Treat project configuration, plugins, package scripts, and test hooks as executable project code.
+- Do not install analyzers, contact cloud APIs, or require a database.

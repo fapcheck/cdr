@@ -1,0 +1,7 @@
+[project]
+name = "python-audit-fixture"
+version = "0.0.0"
+dependencies = ["requests", "legacy-package"]
+
+[project.scripts]
+audit-cli = "app.cli:main"

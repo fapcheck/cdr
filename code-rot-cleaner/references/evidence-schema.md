@@ -1,37 +1,79 @@
-# Evidence schema
+# Evidence schema 2.0
 
-The bundled scripts exchange JSON with `schema_version: "1.0"`.
+Use this reference when consuming or extending `analysis.json`, `proof.json`, or `cleanup-plan.csv`.
 
 ## Analysis
 
-- `project_root`: absolute scanned root.
-- `generated_at`: UTC timestamp.
-- `scope`: extensions, excluded directories, file count, LOC, and bytes.
-- `summary`: candidate counts and potential removable size.
-- `candidates[]`:
-  - `id`: stable run-local ID such as `CRT-001`.
-  - `category`: `orphan-file`, `unused-export`, `unused-dependency`, `duplicate-file`, or `commented-code`.
-  - `subject`: repository-relative file, symbol, dependency, or duplicate pair.
-  - `path`: primary repository-relative path when applicable.
-  - `line`: optional 1-based line.
-  - `confidence`: `high`, `medium`, or `low`.
-  - `initial_status`: always `REVIEW` from the static scanner.
-  - `risk`: `low`, `medium`, or `high`.
-  - `proof_eligible`: whether the disposable-copy script can test a file removal.
-  - `loc` and `bytes`: potential removable size.
-  - `evidence[]` and `caveats[]`: human-readable signals and limitations.
-- `limitations[]`: scan-wide caveats.
+`analysis.json` contains:
+
+- `schema_version`: `2.0`.
+- `mode`: always `report-only` from `audit.py`.
+- `project_root` and `generated_at`.
+- `scope`: extensions, exclusions, scanned file/LOC/byte counts, and skipped symlinks.
+- `summary`: candidate, proof-eligible, proven-removable, review-required, and category counts.
+- `ecosystems`: TypeScript/JavaScript package manager, workspaces, aliases, references, Next/Vite detection, plus Python pyproject, requirements, namespace-package, and CLI-entry data.
+- `available_external_tools`: discovered executable paths or `null`; discovery never installs a tool.
+- `tool_runs`: exact command, execution mode, sanitized environment policy, result, redaction flag, and limitations for approved external collectors.
+- `git_history`: optional supporting collector status.
+- `limitations`: scan-wide uncertainty.
+
+Every `candidates[]` item contains:
+
+- `candidate_id`: stable run-local ID such as `CRT-001`.
+- `category`: finding type.
+- `affected`: `kind` plus exact `path`, `symbol`, `dependency`, and optional `line`.
+- `evidence_sources[]`: structured `family`, `source`, `signal`, and `detail` values.
+- `confidence`: `high`, `medium`, or `low`.
+- `risk`: `low`, `medium`, or `high`.
+- `unresolved_questions[]`.
+- `proof_status`: initially `NOT_RUN`.
+- `recommendation`: initially `REVIEW`.
+- `proof_eligible`: whether file-level disposable proof is mechanically supported.
+- `safety`: known state for dynamic usage, external API, and convention roles.
+- `why_suspicious` and `why_might_still_be_needed`.
+- `loc` and `bytes`: possible impact, not promised savings.
+
+Multiple observations from the built-in fallback still count as one evidence family. Git is supporting evidence and does not count toward removal confidence.
 
 ## Proof
 
-- `project_root`, `analysis_file`, `generated_at`, and `commands` identify the experiment.
-- `baseline`: command results for the intact disposable copy and `passed`.
-- `results[]`: candidate ID, removed path, `outcome`, command results, and duration.
-- `outcome` is `PASSED_IN_DISPOSABLE_COPY`, `FAILED_AFTER_REMOVAL`, `SKIPPED`, or `INCONCLUSIVE`.
-- Command results include command, exit code, duration, timeout, and truncated output.
+`proof.json` contains:
 
-## Final status derivation
+- `schema_version`: `2.0`.
+- project, analysis, generation, command-policy, and copy-exclusion metadata.
+- `commands_requested[]`: check kind, exact display command, and execution mode.
+- `baseline`: untouched-copy command results and aggregate pass state.
+- `results[]`: candidate ID, removed path, outcome, duration, and command results.
+- `limitations[]`.
 
-The report generator derives `SAFE TO REMOVE` only when a high-confidence, low-risk, proof-eligible file candidate has `PASSED_IN_DISPOSABLE_COPY` and the baseline passed. A proof failure becomes `KEEP`. All other cases stay `REVIEW`.
+Each command result records kind, exact command, argv when shell-free, execution mode, environment policy, exit code, timeout, duration, masked output, redaction state, and pass state.
 
-An optional review JSON contains `decisions[]` with `candidate_id`, `status`, and `reason`. Manual decisions may use only `KEEP` or `REVIEW`; they cannot promote a candidate to `SAFE TO REMOVE`.
+Outcomes are:
+
+- `PASSED_IN_DISPOSABLE_COPY`
+- `FAILED_AFTER_REMOVAL`
+- `INCONCLUSIVE`
+
+## Recommendation derivation
+
+`report.py` can derive `SAFE TO REMOVE` only when all conditions hold:
+
+1. At least two non-Git evidence families agree.
+2. At least one family is a mature analyzer or approved project-native source.
+3. Confidence is high and risk is low.
+4. No unresolved question remains.
+5. No dynamic, convention, or external-API concern is known.
+6. The untouched baseline passed.
+7. The one-candidate fresh-copy removal passed every approved relevant check.
+
+A removal check failure becomes `KEEP`. Any missing condition remains `REVIEW`. Manual decisions may downgrade to `KEEP` or retain `REVIEW`; they cannot promote to `SAFE TO REMOVE`.
+
+## Optional manual review
+
+`review.json` contains `decisions[]`. Each decision requires:
+
+- `candidate_id`
+- `recommendation`: only `KEEP` or `REVIEW`
+- `reason`: the exact evidence supporting the decision
+
+`report.py --review review.json` applies these downgrades before generating Markdown and CSV. Manual review cannot produce `SAFE TO REMOVE`.

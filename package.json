@@ -1,7 +1,7 @@
 {
   "name": "codex-code-rot-cleaner",
-  "version": "0.1.0",
-  "description": "A consent-first Codex skill that finds code a project may no longer need and proves eligible removals in disposable copies.",
+  "version": "0.2.0",
+  "description": "A conservative Codex Skill for evidence-first code rot audits and disposable-copy removal proof.",
   "license": "MIT",
   "author": "Francesco Mistero",
   "repository": {
@@ -16,9 +16,13 @@
     "codex-code-rot-cleaner": "scripts/install.js"
   },
   "files": [
-    "code-rot-cleaner",
+    "code-rot-cleaner/SKILL.md",
+    "code-rot-cleaner/agents",
+    "code-rot-cleaner/references",
+    "code-rot-cleaner/scripts/**/*.py",
     "scripts/install.js",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

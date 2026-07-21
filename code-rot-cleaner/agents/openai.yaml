@@ -1,4 +1,4 @@
 interface:
-  display_name: "Code Rot Cleaner"
-  short_description: "Find and prove removable code safely"
-  default_prompt: "Use $code-rot-cleaner to find code this project no longer needs without changing any project file."
+  display_name: "Code Rot Audit"
+  short_description: "Audit removable code with conservative proof"
+  default_prompt: "Use $code-rot-cleaner to audit possible code rot in report-only mode without changing project files."
