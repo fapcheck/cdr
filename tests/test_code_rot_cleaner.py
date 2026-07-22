@@ -351,6 +351,32 @@ class CodeRotCleanerTests(unittest.TestCase):
         forbidden_fragments = ("outputs/", "analysis.json", "proof.json", "cleanup-plan", ".env", "secret")
         self.assertFalse(any(fragment in path.lower() for path in packaged_paths for fragment in forbidden_fragments))
 
+    def test_package_identity_lockfile_and_install_docs_use_supaboiclean_scope(self) -> None:
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(package["name"], "@supaboiclean/cdr")
+        self.assertEqual(package["version"], "0.2.2")
+        self.assertEqual(package["bin"], {"cdr": "scripts/install.js"})
+        self.assertEqual(package["publishConfig"], {
+            "access": "public",
+            "registry": "https://registry.npmjs.org/",
+        })
+
+        lock_path = ROOT / "package-lock.json"
+        self.assertTrue(lock_path.is_file())
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        self.assertEqual(lock["name"], package["name"])
+        self.assertEqual(lock["version"], package["version"])
+        self.assertEqual(lock["packages"][""]["name"], package["name"])
+        self.assertEqual(lock["packages"][""]["version"], package["version"])
+        self.assertEqual(lock["packages"][""]["bin"], package["bin"])
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        installer = (ROOT / "scripts" / "install.js").read_text(encoding="utf-8")
+        self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", readme)
+        self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", installer)
+        self.assertNotRegex(readme, r"npx\s+--yes\s+codex-code-rot-cleaner")
+        self.assertNotRegex(installer, r"npx\s+--yes\s+codex-code-rot-cleaner")
+
     def test_release_layout_has_one_canonical_implementation_and_a_delegating_alias(self) -> None:
         canonical = ROOT / "cdr"
         legacy = ROOT / "code-rot-cleaner"

@@ -2,6 +2,7 @@
 
 ## 0.2.2 - 2026-07-22
 
+- Published the maintained distribution under the new npm identity `@supaboiclean/cdr`; this release does not modify or publish the previous `codex-code-rot-cleaner` package.
 - Added `$cdr` as the canonical short Codex Skill invocation while preserving `$code-rot-cleaner` as a minimal delegating alias.
 - Updated the installer and npm package to install both skill entries without symlinks or duplicated analyzer code.
 - Clarified that skills use `$skill-name`, slash UI may expose skill discovery, and literal `/cdr` is not promised as a custom command.

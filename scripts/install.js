@@ -6,11 +6,11 @@ const path = require("path");
 
 function usage() {
   console.log(`
-Codex Code Rot Cleaner installer
+cdr Codex Skill installer
 
 Usage:
-  npx --yes codex-code-rot-cleaner@latest
-  codex-code-rot-cleaner --skills-dir ~/.codex/skills
+  npx --yes @supaboiclean/cdr@0.2.2
+  cdr --skills-dir ~/.codex/skills
 
 Options:
   --skills-dir PATH  Install into a custom Codex skills directory

@@ -1,7 +1,7 @@
 {
-  "name": "codex-code-rot-cleaner",
+  "name": "@supaboiclean/cdr",
   "version": "0.2.2",
-  "description": "A conservative Codex Skill for evidence-first code rot audits and disposable-copy removal proof.",
+  "description": "A maintained and extended distribution of the conservative Codex Skill for evidence-first code rot audits.",
   "license": "MIT",
   "author": "Francesco Mistero",
   "repository": {
@@ -13,7 +13,7 @@
     "url": "https://github.com/Kappaemme-git/codex-code-rot-cleaner/issues"
   },
   "bin": {
-    "codex-code-rot-cleaner": "scripts/install.js"
+    "cdr": "scripts/install.js"
   },
   "files": [
     "cdr/SKILL.md",
@@ -40,6 +40,7 @@
     "developer-tools"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

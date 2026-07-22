@@ -30,8 +30,10 @@ External adapters record executable, version, exit status, sanitized stderr, and
 ## Install
 
 ```bash
-npx --yes codex-code-rot-cleaner@latest
+npx --yes @supaboiclean/cdr@0.2.2
 ```
+
+The npm package name is `@supaboiclean/cdr`. This is a maintained and extended distribution of the original MIT-licensed work, with the original author attribution preserved. The previous npm package `codex-code-rot-cleaner` is not maintained or published by this release.
 
 Or install manually:
 
@@ -54,7 +56,7 @@ Use $cdr to audit this repository for code rot. Stay in report-only mode, do not
 
 The supported short invocation is `$cdr`. `$code-rot-cleaner` remains available for compatibility. In clients that surface enabled skills in a slash picker, typing `/` may show the enabled `cdr` skill for discovery; this does not mean literal `/cdr` is a supported custom command. Custom prompts, where available, use `/prompts:<name>`, and this package does not install one.
 
-The npm executable only installs the two Codex Skill entries. No standalone CLI cleanup behavior was added.
+The npm executable named `cdr` only installs the canonical `cdr` skill directory and the delegating `code-rot-cleaner` compatibility directory. No standalone CLI cleanup behavior was added.
 
 Codex first maps entry points, aliases, workspaces, routes, package exports, Python CLI entries, dynamic loading, generated areas, and other false-positive surfaces. It can compare the fallback evidence with already-installed ecosystem analyzers after showing the exact command and receiving approval.
 
