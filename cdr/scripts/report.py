@@ -238,6 +238,17 @@ def main() -> int:
         lines.append(f"| {recommendation} | {counts[recommendation]} | {sum(item.get('loc', 0) for item in selected):,} | {format_bytes(sum(item.get('bytes', 0) for item in selected))} |")
     lines.append("")
 
+    builtin_run = analysis.get("builtin_run") or {}
+    if builtin_run:
+        lines.extend([
+            "## Built-in collector",
+            "",
+            f"- Result: `{safe_wording(builtin_run.get('status', 'unknown'))}`",
+            f"- Execution mode: `{safe_wording(builtin_run.get('execution_mode', 'in-process'))}`",
+            f"- Read-only: `{safe_wording(builtin_run.get('read_only', True))}`",
+            "",
+        ])
+
     if analysis.get("tool_runs"):
         lines.extend(["## Evidence tool executions", ""])
         for run in analysis["tool_runs"]:
@@ -250,10 +261,21 @@ def main() -> int:
                 f"- Version: `{safe_wording(run.get('version') or 'not queried')}`",
                 f"- Execution mode: `{safe_wording(run.get('execution_mode', 'not-run'))}`",
                 f"- Environment policy: `{safe_wording(policy.get('name', 'unknown'))}`",
+                f"- Permission source: `{safe_wording(run.get('permission_source', 'legacy-explicit-permission'))}`",
+                f"- Read-only collector: `{safe_wording(run.get('read_only', False))}`",
                 f"- Result: `{safe_wording(run.get('status', 'unknown'))}`",
                 f"- Exit code: `{safe_wording(run.get('exit_code', 'not run'))}`",
                 f"- Timed out: `{safe_wording(run.get('timed_out', False))}`",
             ])
+            if run.get("tool") == "ruff" and run.get("permission_source") == "automatic-read-only-default":
+                if run.get("status") == "available and succeeded":
+                    lines.append("- Automatic execution: Ruff automatically ran in read-only mode.")
+                elif run.get("status") == "unavailable":
+                    lines.append("- Automatic execution: Ruff was unavailable; nothing was installed.")
+                else:
+                    lines.append("- Automatic execution: Ruff automatic read-only execution did not produce usable evidence.")
+            elif run.get("tool") == "ruff" and run.get("permission_source") == "explicit-opt-out":
+                lines.append("- Automatic execution: Ruff was explicitly disabled by the user.")
             if run.get("stderr"):
                 lines.append(f"- Stderr: `{safe_wording(run['stderr'])}`")
             for limitation in run.get("limitations", []):

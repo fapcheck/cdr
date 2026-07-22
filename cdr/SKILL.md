@@ -1,6 +1,6 @@
 ---
 name: cdr
-description: Audit code a repository may no longer need by combining conservative built-in analysis, existing Knip, Vulture, Ruff, or deptry evidence, optional Git context, and one-candidate disposable-copy proof. Use when Codex is asked to investigate dead code, orphan files, exports or dependencies with no usage evidence, duplicate implementations, stale commented code, removable LOC, repository bloat, cleanup risk, or code rot in JavaScript, TypeScript, Python, workspaces, or monorepos. Default to report-only mode, never treat regex or age as removal proof, require approval before project commands, and require exact candidate-ID approval before real edits.
+description: Audit code a repository may no longer need with conservative built-in analysis, automatic read-only evidence from an already-installed Ruff, optional approved Knip, Vulture, or deptry evidence, Git context, and one-candidate disposable-copy proof. Use when Codex is asked to investigate dead code, orphan files, exports or dependencies with no usage evidence, duplicate implementations, stale commented code, removable LOC, repository bloat, cleanup risk, or code rot in JavaScript, TypeScript, Python, workspaces, or monorepos. Default to report-only mode, allow Ruff opt-out, never treat lint or age as removal proof, require approval before all other external tools and project commands, and require exact candidate-ID approval before real edits.
 ---
 
 # cdr Code Rot Audit
@@ -13,10 +13,10 @@ Use `$cdr` as the primary explicit invocation. `$code-rot-cleaner` remains a com
 
 Treat `Use $cdr` as permission only to inspect the repository and write audit artifacts.
 
-- Permit repository inspection, built-in static collection, read-only Git evidence, and report generation.
+- Permit repository inspection, built-in static collection, automatic use of an already-installed Ruff through the fixed read-only collector, read-only Git evidence, and report generation.
 - Do not delete, edit, rename, format, uninstall, regenerate lockfiles, or reorganize project files.
-- Do not run tests, builds, typechecks, linters, package managers, project-local analyzers, or configuration that can execute project code without explicit approval.
-- Do not install or download Knip, Vulture, Ruff, deptry, or any other analyzer. Use an existing executable only.
+- Do not run tests, builds, typechecks, package-manager lint scripts, package managers, project commands, Knip, Vulture, deptry, or any other project-aware analyzer without explicit approval. Ruff is the only automatic exception.
+- Never install or download Ruff during an automatic audit. Installing Ruff or any other analyzer requires separate explicit approval.
 - Preserve dirty worktrees and unrelated user changes. Never reset, clean, stash, or rewrite history.
 - Store artifacts in `outputs/code-rot-cleaner/` unless the user chooses another path.
 
@@ -30,22 +30,34 @@ Run the dependency-free collector from this skill directory:
 
 ```bash
 python3 scripts/audit.py /absolute/path/to/project \
-  /absolute/path/to/project/outputs/code-rot-cleaner/analysis.json
+  /absolute/path/to/project/outputs/code-rot-cleaner/analysis.json \
+  --auto-ruff
 ```
 
-This command stays in report-only mode. Its built-in import graph, manifest search, convention map, and text search are one fallback evidence family. They can produce `REVIEW`, never `SAFE TO REMOVE`.
+This command stays in report-only mode. Its built-in import graph, manifest search, convention map, and text search are one fallback evidence family. If Ruff is already installed, `--auto-ruff` also runs the existing Ruff adapter without another prompt. Neither family can independently produce `SAFE TO REMOVE`.
 
 Use optional read-only Git context only when it is relevant:
 
 ```bash
 python3 scripts/audit.py /absolute/path/to/project \
   /absolute/path/to/project/outputs/code-rot-cleaner/analysis.json \
+  --auto-ruff \
   --include-git-history
 ```
 
 Treat file age, last modification, commit frequency, and blame context only as supporting evidence. Old code is not proof of dead code.
 
-### 2. Add mature analyzer evidence only after approval
+If the user says not to run Ruff, honor the opt-out and use `--no-ruff` instead of `--auto-ruff`:
+
+```bash
+python3 scripts/audit.py /absolute/path/to/project \
+  /absolute/path/to/project/outputs/code-rot-cleaner/analysis.json \
+  --no-ruff
+```
+
+The bare low-level CLI remains explicit-permission by default; automatic Ruff execution occurs only when this skill supplies `--auto-ruff`.
+
+### 2. Add other mature analyzer evidence only after approval
 
 Prefer existing ecosystem tools to reimplementing their analysis:
 
@@ -53,9 +65,17 @@ Prefer existing ecosystem tools to reimplementing their analysis:
 - Python: use Vulture for function, class, method, property, and unreachable-code leads; Ruff for complementary local lint diagnostics; and deptry for dependency evidence.
 - Built-in collector: fallback and cross-check only.
 
+Ruff is the sole automatic analyzer. The adapter probes the detected executable's version, then uses this fixed argv shape with `shell=False`, a finite timeout, the sanitized environment, and secret masking:
+
+```text
+<detected-ruff> check . --select F401,F811,F841 --output-format json --no-cache --no-fix
+```
+
+Never add `--fix`, `--unsafe-fixes`, or `format`. Do not claim sandboxing or network isolation. Malformed output, timeout, launch failure, and unsupported output fail closed and contribute no evidence. Ruff evidence remains `REVIEW` without independent evidence and disposable-copy proof.
+
 Do not add or improvise a custom TypeScript Compiler API collector unless a current supported Knip release has a reproduced, non-configurable gap that materially changes audit safety. Duplicating Knip's alias, workspace, export, plugin, and framework graph increases drift and inconsistency risk.
 
-First show the exact analyzer command, explain that project configuration can execute code, and request approval. Then name only approved, already-installed tools:
+Knip, Vulture, and deptry still require explicit approval. First show their exact analyzer command, explain that project configuration can execute code, and request approval. Then name only approved, already-installed tools:
 
 ```bash
 python3 scripts/audit.py /absolute/path/to/project \
@@ -63,7 +83,7 @@ python3 scripts/audit.py /absolute/path/to/project \
   --allow-tool knip --allow-tool vulture
 ```
 
-The script uses argv execution without a shell, a sanitized allow-list environment, secret masking, and no automatic installation. Vulture is invoked through its Python API adapter, not by parsing terminal prose. Record executable and version, validate documented machine-readable structures, and use only these statuses: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, or `skipped because approval was not granted`. Reject partial, malformed, or unknown output without merging it. Record missing tools as unavailable instead of downloading them. Treat analyzer disagreement as `REVIEW`.
+The script uses argv execution without a shell, a sanitized allow-list environment, secret masking, and no automatic installation. Vulture is invoked through its Python API adapter, not by parsing terminal prose. Record executable, version, permission source, read-only status, and one of these collector states: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, `skipped because approval was not granted`, or `skipped because explicitly disabled`. Reject partial, malformed, or unknown output without merging it. Record missing tools as unavailable instead of downloading them. Treat analyzer disagreement as `REVIEW`.
 
 ### 3. Inspect every candidate
 

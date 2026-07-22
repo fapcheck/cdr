@@ -253,6 +253,155 @@ class CodeRotCleanerTests(unittest.TestCase):
         self.assertEqual(by_tool["knip"]["status"], "unavailable")
         self.assertEqual(by_tool["vulture"]["status"], "skipped because approval was not granted")
 
+    def test_auto_ruff_runs_only_available_ruff_and_keeps_findings_review_only(self) -> None:
+        audit_module = load_module("audit_auto_ruff", SCRIPTS / "audit.py")
+        signal = {
+            "category": "symbol-no-usage-evidence",
+            "affected": {"kind": "symbol", "path": "sample.py", "symbol": "F401@1:1"},
+            "evidence": {"family": "ruff", "source": "ruff.F401", "signal": "no-usage-evidence", "detail": "captured"},
+        }
+        collectors = {
+            "knip": mock.Mock(),
+            "vulture": mock.Mock(),
+            "ruff": mock.Mock(return_value=([signal], {"tool": "ruff", "status": "available and succeeded"})),
+            "deptry": mock.Mock(),
+        }
+        available = {name: name for name in collectors}
+        candidates: list[dict] = []
+
+        with mock.patch.dict(audit_module.EXTERNAL_COLLECTORS, collectors, clear=True):
+            runs = audit_module.collect_external_tools(
+                Path.cwd(), candidates, set(), 30, available, automatic={"ruff"},
+            )
+
+        by_tool = {run["tool"]: run for run in runs}
+        collectors["ruff"].assert_called_once()
+        collectors["knip"].assert_not_called()
+        collectors["vulture"].assert_not_called()
+        collectors["deptry"].assert_not_called()
+        self.assertEqual(by_tool["ruff"]["status"], "available and succeeded")
+        self.assertEqual(by_tool["ruff"]["permission_source"], "automatic-read-only-default")
+        self.assertTrue(by_tool["ruff"]["read_only"])
+        self.assertEqual(candidates[0]["recommendation"], "REVIEW")
+        for name in ("knip", "vulture", "deptry"):
+            self.assertEqual(by_tool[name]["status"], "skipped because approval was not granted")
+
+    def test_low_level_cli_model_does_not_auto_run_ruff_without_the_narrow_flag(self) -> None:
+        audit_module = load_module("audit_explicit_ruff", SCRIPTS / "audit.py")
+        collector = mock.Mock()
+        with mock.patch.dict(audit_module.EXTERNAL_COLLECTORS, {"ruff": collector}, clear=True):
+            runs = audit_module.collect_external_tools(
+                Path.cwd(), [], set(), 30, {"ruff": "ruff"},
+            )
+
+        collector.assert_not_called()
+        self.assertEqual(runs[0]["status"], "skipped because approval was not granted")
+        self.assertEqual(runs[0]["permission_source"], "explicit-user-approval-required")
+
+    def test_explicit_ruff_opt_out_overrides_automatic_execution(self) -> None:
+        audit_module = load_module("audit_no_ruff", SCRIPTS / "audit.py")
+        collector = mock.Mock()
+        with mock.patch.dict(audit_module.EXTERNAL_COLLECTORS, {"ruff": collector}, clear=True):
+            runs = audit_module.collect_external_tools(
+                Path.cwd(), [], set(), 30, {"ruff": "ruff"},
+                automatic={"ruff"}, disabled={"ruff"},
+            )
+
+        collector.assert_not_called()
+        self.assertEqual(runs[0]["status"], "skipped because explicitly disabled")
+        self.assertEqual(runs[0]["permission_source"], "explicit-opt-out")
+
+    def test_auto_ruff_unavailable_is_reported_without_installing(self) -> None:
+        audit_module = load_module("audit_ruff_unavailable", SCRIPTS / "audit.py")
+        with mock.patch.dict(audit_module.EXTERNAL_COLLECTORS, {"ruff": mock.Mock()}, clear=True):
+            runs = audit_module.collect_external_tools(
+                Path.cwd(), [], set(), 30, {"ruff": None}, automatic={"ruff"},
+            )
+
+        self.assertEqual(runs[0]["status"], "unavailable")
+        self.assertEqual(runs[0]["permission_source"], "automatic-read-only-default")
+        self.assertIn("nothing was installed", runs[0]["limitations"][0].lower())
+
+    def test_ruff_uses_fixed_read_only_argv_sanitized_environment_and_redaction(self) -> None:
+        python_collector = load_module("python_ruff_security", SCRIPTS / "collectors" / "python.py")
+        process_module = python_collector.run_approved_tool.__globals__["subprocess"]
+        secret = "ghp_abcdefghijklmnop"
+        payload = json.dumps([{
+            "code": "F401",
+            "filename": "sample.py",
+            "message": f"token={secret}",
+            "location": {"row": 1, "column": 1},
+        }])
+        completed = (
+            subprocess.CompletedProcess([], 0, stdout="ruff 0.15.10\n", stderr=""),
+            subprocess.CompletedProcess([], 1, stdout=payload, stderr=f"token={secret}"),
+        )
+        source_environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),
+            "GITHUB_TOKEN": secret,
+        }
+
+        with mock.patch.dict(os.environ, source_environment, clear=True), mock.patch.object(
+            process_module, "run", side_effect=completed,
+        ) as process:
+            signals, tool_run = python_collector.collect_ruff(PY_FIXTURE, Path("ruff"), 30)
+
+        check_argv = process.call_args_list[1].args[0]
+        check_options = process.call_args_list[1].kwargs
+        self.assertEqual(check_argv, [
+            "ruff", "check", ".", "--select", "F401,F811,F841",
+            "--output-format", "json", "--no-cache", "--no-fix",
+        ])
+        self.assertFalse(check_options["shell"])
+        self.assertNotIn("GITHUB_TOKEN", check_options["env"])
+        self.assertNotIn("--fix", check_argv)
+        self.assertNotIn("--unsafe-fixes", check_argv)
+        self.assertNotIn("format", check_argv)
+        self.assertEqual(check_options["timeout"], 30)
+        self.assertEqual(tool_run["status"], "available and succeeded")
+        self.assertTrue(tool_run["redacted"])
+        self.assertNotIn(secret, json.dumps({"signals": signals, "run": tool_run}))
+
+    def test_ruff_process_failure_is_not_a_successful_clean_scan(self) -> None:
+        python_collector = load_module("python_ruff_failure", SCRIPTS / "collectors" / "python.py")
+        with mock.patch.object(python_collector, "run_approved_tool", side_effect=[
+            self.tool_result("ruff 0.15.10\n"),
+            self.tool_result("[]", exit_code=2, stderr="internal failure"),
+        ]):
+            signals, tool_run = python_collector.collect_ruff(PY_FIXTURE, Path("ruff"), 30)
+
+        self.assertEqual(signals, [])
+        self.assertEqual(tool_run["status"], "failed")
+        self.assertEqual(tool_run["stderr"], "internal failure")
+
+    def test_report_distinguishes_builtin_and_automatic_ruff(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            analysis = root / "analysis.json"
+            report = root / "report.md"
+            analysis.write_text(json.dumps({
+                "schema_version": "2.0",
+                "project_root": str(root),
+                "scope": {"source_files": 0},
+                "builtin_run": {"status": "available and succeeded", "execution_mode": "in-process", "read_only": True},
+                "tool_runs": [{
+                    "tool": "ruff",
+                    "status": "available and succeeded",
+                    "permission_source": "automatic-read-only-default",
+                    "read_only": True,
+                    "environment_policy": {"name": "sanitized-allowlist-v1"},
+                }],
+                "candidates": [],
+                "limitations": [],
+            }), encoding="utf-8")
+
+            self.run_script("report.py", analysis, report, root / "plan.csv")
+            rendered = report.read_text(encoding="utf-8")
+
+        self.assertIn("## Built-in collector", rendered)
+        self.assertIn("Ruff automatically ran in read-only mode.", rendered)
+
     def test_one_failed_collector_does_not_discard_another_collectors_evidence(self) -> None:
         audit_module = load_module("audit_isolation", SCRIPTS / "audit.py")
         signal = {
@@ -354,7 +503,7 @@ class CodeRotCleanerTests(unittest.TestCase):
     def test_package_identity_lockfile_and_install_docs_use_supaboiclean_scope(self) -> None:
         package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(package["name"], "@supaboiclean/cdr")
-        self.assertEqual(package["version"], "0.2.2")
+        self.assertEqual(package["version"], "0.2.3")
         self.assertEqual(package["bin"], {"cdr": "scripts/install.js"})
         self.assertEqual(package["repository"], {
             "type": "git",
@@ -378,13 +527,24 @@ class CodeRotCleanerTests(unittest.TestCase):
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         installer = (ROOT / "scripts" / "install.js").read_text(encoding="utf-8")
-        self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", readme)
+        self.assertIn("npx --yes @supaboiclean/cdr@0.2.3", readme)
         self.assertIn("https://github.com/fapcheck/cdr", readme)
         self.assertIn("https://github.com/Kappaemme-git/codex-code-rot-cleaner", readme)
         self.assertIn("Francesco Mistero", readme)
-        self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", installer)
+        self.assertIn("npx --yes @supaboiclean/cdr@0.2.3", installer)
         self.assertNotRegex(readme, r"npx\s+--yes\s+codex-code-rot-cleaner")
         self.assertNotRegex(installer, r"npx\s+--yes\s+codex-code-rot-cleaner")
+
+    def test_skill_defaults_to_auto_ruff_with_an_explicit_opt_out(self) -> None:
+        canonical = (ROOT / "cdr" / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("--auto-ruff", canonical)
+        self.assertIn("--no-ruff", canonical)
+        self.assertIn("already-installed Ruff", canonical)
+        self.assertIn("Knip, Vulture, and deptry still require explicit approval", canonical)
+        self.assertIn("--auto-ruff", readme)
+        self.assertIn("--no-ruff", readme)
 
     def test_release_layout_has_one_canonical_implementation_and_a_delegating_alias(self) -> None:
         canonical = ROOT / "cdr"
@@ -395,6 +555,7 @@ class CodeRotCleanerTests(unittest.TestCase):
         self.assertIn("\nname: cdr\n", canonical_skill)
         self.assertIn("\nname: code-rot-cleaner\n", legacy_skill)
         self.assertIn("$cdr", legacy_skill)
+        self.assertIn("../cdr/SKILL.md", legacy_skill)
         self.assertIn("report-only", legacy_skill.lower())
         self.assertIn("approval", legacy_skill.lower())
         self.assertTrue((canonical / "agents" / "openai.yaml").is_file())
@@ -555,6 +716,10 @@ class CodeRotCleanerTests(unittest.TestCase):
         )
         self.assertTrue(redacted)
         self.assertNotIn(generic_secret, masked)
+        json_secret = "quoted-secret-value"
+        masked_json, redacted = security.mask_secrets(json.dumps({"token": json_secret}), {})
+        self.assertTrue(redacted)
+        self.assertEqual(json.loads(masked_json), {"token": "[REDACTED]"})
         with tempfile.TemporaryDirectory() as temp:
             result = security.run_approved_tool(
                 [sys.executable, "-c", f"import sys; sys.stderr.write('token={generic_secret}')"],

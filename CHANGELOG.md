@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-07-22
+
+- Made the `$cdr` report-only workflow automatically run an already-installed Ruff through the existing fixed, no-fix JSON adapter.
+- Added explicit Ruff opt-out while preserving approval requirements for Knip, Vulture, deptry, tests, builds, typechecks, package-manager scripts, project commands, and shells.
+- Added built-in-versus-automatic-Ruff reporting, permission-source metadata, fail-closed regression coverage, and live installed-skill smoke coverage.
+
 ## 0.2.2 - 2026-07-22
 
 - Moved the maintained distribution's canonical repository to `fapcheck/cdr` while retaining attribution and a link to Francesco Mistero's original MIT-licensed project.

@@ -12,8 +12,9 @@ Use this reference when consuming or extending `analysis.json`, `proof.json`, or
 - `scope`: extensions, exclusions, scanned file/LOC/byte counts, and skipped symlinks.
 - `summary`: candidate, proof-eligible, proven-removable, review-required, and category counts.
 - `ecosystems`: TypeScript/JavaScript package manager, workspaces, aliases, references, Next/Vite detection, plus Python pyproject, requirements, namespace-package, and CLI-entry data.
+- `builtin_run`: the in-process built-in collector status, execution mode, and read-only marker.
 - `available_external_tools`: discovered executable paths or `null`; discovery never installs a tool.
-- `tool_runs`: detected executable, version, exact command, execution mode, sanitized environment policy, exit result, stderr, redaction flag, limitations, and the fail-closed collector status.
+- `tool_runs`: detected executable, version, exact command, execution mode, permission source, read-only marker, sanitized environment policy, exit result, stderr, redaction flag, limitations, and the fail-closed collector status. `automatic-read-only-default` is reserved for Ruff; other tools remain explicit.
 - `git_history`: optional supporting collector status.
 - `limitations`: scan-wide uncertainty.
 
@@ -36,6 +37,7 @@ External collector status is exactly one of:
 - `failed`
 - `unsupported output schema`
 - `skipped because approval was not granted`
+- `skipped because explicitly disabled`
 
 Only `available and succeeded` evidence may be merged or count as a mature family. Additional documented fields are tolerated, but malformed JSON, wrong top-level types, missing required fields, and unknown schemas are rejected.
 

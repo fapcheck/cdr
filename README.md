@@ -12,25 +12,27 @@ Allowed by default:
 
 - inspect repository files and Git state;
 - run the dependency-free built-in collector;
+- automatically run an already-installed Ruff through the fixed read-only `ruff check` collector, unless the user opts out;
 - collect optional read-only Git context;
 - write reports under `outputs/code-rot-cleaner/`.
 
 Requires explicit approval:
 
-- running existing Knip, Vulture, Ruff, or deptry executables;
+- running existing Knip, Vulture, or deptry executables;
 - running project tests, builds, typechecks, linters, or shell commands;
+- installing Ruff or any other analyzer;
 - applying exact candidate removals to the real repository.
 
 The built-in scanner is a fallback. Its regex and import-graph observations can never independently produce `SAFE TO REMOVE`. Git age is supporting context only. Knip is the primary JS/TS project-graph authority. A second custom TypeScript Compiler API graph is intentionally not maintained because it would duplicate Knip's aliases, workspaces, exports, plugins, and framework model while creating inconsistent results; project-native typechecks remain proof commands, not a competing reachability collector.
 
-For Python, Ruff remains complementary local lint evidence. Optional Vulture analysis uses its Python API through the interpreter associated with an already-installed Vulture executable, scans the selected project Python files together at confidence 60, and normalizes functions, classes, methods, properties, and unreachable code. Vulture is never installed automatically and never supplies removal proof by itself.
+For Python, an already-installed Ruff runs automatically as complementary local lint evidence using a fixed `ruff check` JSON invocation with no fixes; use `--no-ruff` when the user explicitly opts out. Optional Vulture analysis uses its Python API through the interpreter associated with an already-installed Vulture executable, scans the selected project Python files together at confidence 60, and normalizes functions, classes, methods, properties, and unreachable code. No analyzer is installed automatically, and Ruff or Vulture evidence never supplies removal proof by itself.
 
-External adapters record executable, version, exit status, sanitized stderr, and one of five states: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, or `skipped because approval was not granted`. Documented JSON structures are validated fail-closed; malformed output is not interpreted as an empty successful scan.
+External adapters record executable, version, exit status, sanitized stderr, and one of six states: `available and succeeded`, `unavailable`, `failed`, `unsupported output schema`, `skipped because approval was not granted`, or `skipped because explicitly disabled`. Documented JSON structures are validated fail-closed; malformed output is not interpreted as an empty successful scan.
 
 ## Install
 
 ```bash
-npx --yes @supaboiclean/cdr@0.2.2
+npx --yes @supaboiclean/cdr@0.2.3
 ```
 
 The npm package name is `@supaboiclean/cdr`, and its canonical maintained repository is [fapcheck/cdr](https://github.com/fapcheck/cdr). This is a maintained and extended distribution of [the original project](https://github.com/Kappaemme-git/codex-code-rot-cleaner) by Francesco Mistero, released under the MIT License with the original author attribution preserved. The previous npm package `codex-code-rot-cleaner` is not maintained or published by this release.
@@ -54,11 +56,21 @@ Open a repository in Codex and invoke:
 Use $cdr to audit this repository for code rot. Stay in report-only mode, do not run project commands, and do not change project files.
 ```
 
+This default workflow runs the built-in collector and passes `--auto-ruff`, which runs an already-installed Ruff without a separate prompt. Knip, Vulture, deptry, tests, builds, typechecks, package-manager scripts, arbitrary project commands, and shell commands still require explicit approval.
+
+To opt out for one audit:
+
+```text
+Use $cdr to audit this repository, but do not run Ruff.
+```
+
+The skill then uses `--no-ruff`; it does not install or execute Ruff.
+
 The supported short invocation is `$cdr`. `$code-rot-cleaner` remains available for compatibility. In clients that surface enabled skills in a slash picker, typing `/` may show the enabled `cdr` skill for discovery; this does not mean literal `/cdr` is a supported custom command. Custom prompts, where available, use `/prompts:<name>`, and this package does not install one.
 
 The npm executable named `cdr` only installs the canonical `cdr` skill directory and the delegating `code-rot-cleaner` compatibility directory. No standalone CLI cleanup behavior was added.
 
-Codex first maps entry points, aliases, workspaces, routes, package exports, Python CLI entries, dynamic loading, generated areas, and other false-positive surfaces. It can compare the fallback evidence with already-installed ecosystem analyzers after showing the exact command and receiving approval.
+Codex first maps entry points, aliases, workspaces, routes, package exports, Python CLI entries, dynamic loading, generated areas, and other false-positive surfaces. Ruff is the only external collector enabled automatically, through the fixed read-only command. It can compare the fallback evidence with other already-installed ecosystem analyzers after showing the exact command and receiving approval.
 
 Before proof, Codex asks permission for exact project checks. The proof helper creates an untouched baseline copy, then a fresh copy for each candidate, removes only that candidate, and repeats the same checks. Commands use argv without a shell by default, a sanitized environment, secret masking, path validation, and symlink-escape protection. The proof is cryptographically bound to the exact analysis file, project root, candidate path, and approved command set before it can influence a recommendation.
 

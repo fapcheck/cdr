@@ -9,7 +9,7 @@ function usage() {
 cdr Codex Skill installer
 
 Usage:
-  npx --yes @supaboiclean/cdr@0.2.2
+  npx --yes @supaboiclean/cdr@0.2.3
   cdr --skills-dir ~/.codex/skills
 
 Options:

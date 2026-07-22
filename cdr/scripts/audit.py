@@ -99,30 +99,63 @@ def collect_external_tools(
     approved: set[str],
     timeout: int,
     available_tools: dict[str, str | None],
+    *,
+    automatic: set[str] | None = None,
+    disabled: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    automatic = set(automatic or ())
+    disabled = set(disabled or ())
+    if automatic - {"ruff"}:
+        raise ValueError("Only Ruff may be enabled automatically.")
+    permitted = approved | automatic
     tool_runs: list[dict[str, Any]] = []
     for name, collector in EXTERNAL_COLLECTORS.items():
         executable_text = available_tools.get(name)
+        permission_source = (
+            "explicit-opt-out" if name in disabled
+            else "automatic-read-only-default" if name in automatic
+            else "explicit-user-approval" if name in approved
+            else "explicit-user-approval-required"
+        )
+        if name in disabled:
+            tool_runs.append({
+                "tool": name,
+                "executable": executable_text,
+                "version": None,
+                "status": "skipped because explicitly disabled",
+                "approval_granted": False,
+                "permission_source": permission_source,
+                "read_only": name == "ruff",
+                "execution_mode": "not-run",
+                "environment_policy": {"name": "not-applicable"},
+                "stderr": "",
+                "limitations": ["Ruff execution was explicitly disabled by the user."],
+            })
+            continue
         if not executable_text:
             tool_runs.append({
                 "tool": name,
                 "executable": None,
                 "version": None,
                 "status": "unavailable",
-                "approval_granted": name in approved,
+                "approval_granted": name in permitted,
+                "permission_source": permission_source,
+                "read_only": name == "ruff",
                 "execution_mode": "not-run",
                 "environment_policy": {"name": "not-applicable"},
                 "stderr": "",
                 "limitations": ["No existing executable was found; nothing was installed or downloaded."],
             })
             continue
-        if name not in approved:
+        if name not in permitted:
             tool_runs.append({
                 "tool": name,
                 "executable": executable_text,
                 "version": None,
                 "status": "skipped because approval was not granted",
                 "approval_granted": False,
+                "permission_source": permission_source,
+                "read_only": name == "ruff",
                 "execution_mode": "not-run",
                 "environment_policy": {"name": "not-applicable"},
                 "stderr": "",
@@ -139,6 +172,8 @@ def collect_external_tools(
                 "version": None,
                 "status": "failed",
                 "approval_granted": True,
+                "permission_source": permission_source,
+                "read_only": name == "ruff",
                 "execution_mode": "argv-no-shell",
                 "environment_policy": {"name": "sanitized-allowlist-v1"},
                 "stderr": message,
@@ -148,6 +183,8 @@ def collect_external_tools(
             continue
         if run.get("status") == "available and succeeded":
             merge_external_signals(candidates, signals)
+        run["permission_source"] = permission_source
+        run["read_only"] = name == "ruff"
         tool_runs.append(run)
     return tool_runs
 
@@ -160,6 +197,15 @@ def parse_args() -> argparse.Namespace:
         "--allow-tool", action="append", choices=sorted(EXTERNAL_COLLECTORS), default=[],
         help="Run one explicitly approved project-aware analyzer; repeat as needed",
     )
+    ruff_mode = parser.add_mutually_exclusive_group()
+    ruff_mode.add_argument(
+        "--auto-ruff", action="store_true",
+        help="Automatically run an already-installed Ruff with the fixed read-only collector command",
+    )
+    ruff_mode.add_argument(
+        "--no-ruff", action="store_true",
+        help="Explicitly disable Ruff execution for this audit",
+    )
     parser.add_argument("--include-git-history", action="store_true", help="Add supporting read-only Git age, frequency, and blame evidence")
     parser.add_argument("--tool-timeout", type=int, default=120)
     return parser.parse_args()
@@ -169,6 +215,8 @@ def main() -> int:
     args = parse_args()
     if args.tool_timeout < 1:
         raise SystemExit("--tool-timeout must be positive.")
+    if args.no_ruff and "ruff" in args.allow_tool:
+        raise SystemExit("--no-ruff cannot be combined with --allow-tool ruff.")
     project = args.project.resolve(strict=True)
     collected = builtin.collect(project)
     candidates = collected["candidates"]
@@ -177,7 +225,15 @@ def main() -> int:
         executable = discover_executable(project, name)
         available_tools[name] = str(executable) if executable else None
 
-    tool_runs = collect_external_tools(project, candidates, set(args.allow_tool), args.tool_timeout, available_tools)
+    tool_runs = collect_external_tools(
+        project,
+        candidates,
+        set(args.allow_tool),
+        args.tool_timeout,
+        available_tools,
+        automatic={"ruff"} if args.auto_ruff else set(),
+        disabled={"ruff"} if args.no_ruff else set(),
+    )
 
     finalize_candidates(candidates)
     git_run = git_history.collect(project, candidates) if args.include_git_history else {"status": "not-requested"}
@@ -207,12 +263,18 @@ def main() -> int:
             },
         },
         "ecosystems": collected["ecosystems"],
+        "builtin_run": {
+            "collector": "builtin",
+            "status": "available and succeeded",
+            "execution_mode": "in-process",
+            "read_only": True,
+        },
         "available_external_tools": available_tools,
         "tool_runs": tool_runs,
         "git_history": git_run,
         "candidates": candidates,
         "limitations": collected["limitations"] + [
-            "External analyzer availability is only reported; tools run only when named with --allow-tool after explicit approval.",
+            "An already-installed Ruff may run through the fixed read-only collector only when --auto-ruff is requested; Knip, Vulture, deptry, and project commands still require explicit approval.",
             "Git history is supporting context only and never upgrades a recommendation.",
         ],
     }
