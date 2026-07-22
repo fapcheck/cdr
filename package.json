@@ -6,11 +6,11 @@
   "author": "Francesco Mistero",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Kappaemme-git/codex-code-rot-cleaner.git"
+    "url": "git+https://github.com/fapcheck/cdr.git"
   },
-  "homepage": "https://github.com/Kappaemme-git/codex-code-rot-cleaner#readme",
+  "homepage": "https://github.com/fapcheck/cdr#readme",
   "bugs": {
-    "url": "https://github.com/Kappaemme-git/codex-code-rot-cleaner/issues"
+    "url": "https://github.com/fapcheck/cdr/issues"
   },
   "bin": {
     "cdr": "scripts/install.js"

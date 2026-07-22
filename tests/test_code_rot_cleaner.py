@@ -356,6 +356,12 @@ class CodeRotCleanerTests(unittest.TestCase):
         self.assertEqual(package["name"], "@supaboiclean/cdr")
         self.assertEqual(package["version"], "0.2.2")
         self.assertEqual(package["bin"], {"cdr": "scripts/install.js"})
+        self.assertEqual(package["repository"], {
+            "type": "git",
+            "url": "git+https://github.com/fapcheck/cdr.git",
+        })
+        self.assertEqual(package["homepage"], "https://github.com/fapcheck/cdr#readme")
+        self.assertEqual(package["bugs"], {"url": "https://github.com/fapcheck/cdr/issues"})
         self.assertEqual(package["publishConfig"], {
             "access": "public",
             "registry": "https://registry.npmjs.org/",
@@ -373,6 +379,9 @@ class CodeRotCleanerTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         installer = (ROOT / "scripts" / "install.js").read_text(encoding="utf-8")
         self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", readme)
+        self.assertIn("https://github.com/fapcheck/cdr", readme)
+        self.assertIn("https://github.com/Kappaemme-git/codex-code-rot-cleaner", readme)
+        self.assertIn("Francesco Mistero", readme)
         self.assertIn("npx --yes @supaboiclean/cdr@0.2.2", installer)
         self.assertNotRegex(readme, r"npx\s+--yes\s+codex-code-rot-cleaner")
         self.assertNotRegex(installer, r"npx\s+--yes\s+codex-code-rot-cleaner")

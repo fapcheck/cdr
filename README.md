@@ -33,15 +33,15 @@ External adapters record executable, version, exit status, sanitized stderr, and
 npx --yes @supaboiclean/cdr@0.2.2
 ```
 
-The npm package name is `@supaboiclean/cdr`. This is a maintained and extended distribution of the original MIT-licensed work, with the original author attribution preserved. The previous npm package `codex-code-rot-cleaner` is not maintained or published by this release.
+The npm package name is `@supaboiclean/cdr`, and its canonical maintained repository is [fapcheck/cdr](https://github.com/fapcheck/cdr). This is a maintained and extended distribution of [the original project](https://github.com/Kappaemme-git/codex-code-rot-cleaner) by Francesco Mistero, released under the MIT License with the original author attribution preserved. The previous npm package `codex-code-rot-cleaner` is not maintained or published by this release.
 
 Or install manually:
 
 ```bash
-git clone https://github.com/Kappaemme-git/codex-code-rot-cleaner.git
+git clone https://github.com/fapcheck/cdr.git
 mkdir -p ~/.codex/skills
-cp -R codex-code-rot-cleaner/code-rot-cleaner ~/.codex/skills/code-rot-cleaner
-cp -R codex-code-rot-cleaner/cdr ~/.codex/skills/cdr
+cp -R cdr/cdr ~/.codex/skills/cdr
+cp -R cdr/code-rot-cleaner ~/.codex/skills/code-rot-cleaner
 ```
 
 Restart Codex after installation.

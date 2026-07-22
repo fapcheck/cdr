@@ -2,6 +2,7 @@
 
 ## 0.2.2 - 2026-07-22
 
+- Moved the maintained distribution's canonical repository to `fapcheck/cdr` while retaining attribution and a link to Francesco Mistero's original MIT-licensed project.
 - Published the maintained distribution under the new npm identity `@supaboiclean/cdr`; this release does not modify or publish the previous `codex-code-rot-cleaner` package.
 - Added `$cdr` as the canonical short Codex Skill invocation while preserving `$code-rot-cleaner` as a minimal delegating alias.
 - Updated the installer and npm package to install both skill entries without symlinks or duplicated analyzer code.
